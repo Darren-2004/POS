@@ -1,0 +1,535 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { prisma } from './db.js';
+import { hashPin, verifyPin } from './authHelper.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+app.use(cors());
+app.use(express.json());
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// -------------------------------------------------------------
+// HEARTBEAT
+// -------------------------------------------------------------
+app.get('/api/heartbeat', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// -------------------------------------------------------------
+// USERS & AUTHENTICATION
+// -------------------------------------------------------------
+
+// Récupérer tous les profils utilisateurs pour l'écran de sélection
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        needsPinReset: true
+      },
+      orderBy: {
+        name: 'asc'
+      }
+    });
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs' });
+  }
+});
+
+// Authentification
+app.post('/api/auth/login', async (req, res) => {
+  const { userId, pin } = req.body;
+  
+  if (!userId || !pin) {
+    return res.status(400).json({ error: 'ID utilisateur et code PIN requis' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const isValid = verifyPin(pin, user.pin);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Code PIN incorrect' });
+    }
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      needsPinReset: user.needsPinReset
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la connexion' });
+  }
+});
+
+// Réinitialisation du code PIN (premier login)
+app.post('/api/auth/reset-pin', async (req, res) => {
+  const { userId, oldPin, newPin } = req.body;
+
+  if (!userId || !oldPin || !newPin) {
+    return res.status(400).json({ error: 'Tous les champs sont requis' });
+  }
+
+  if (newPin.length < 4) {
+    return res.status(400).json({ error: 'Le nouveau code PIN doit comporter au moins 4 chiffres' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const isValid = verifyPin(oldPin, user.pin);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Ancien code PIN incorrect' });
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        pin: hashPin(newPin),
+        needsPinReset: false
+      }
+    });
+
+    res.json({ message: 'Code PIN personnalisé mis à jour avec succès' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la réinitialisation du code PIN' });
+  }
+});
+
+// Créer une caissière (Admin requis)
+app.post('/api/users', async (req, res) => {
+  const { adminId, adminPin, name } = req.body;
+
+  if (!adminId || !adminPin || !name) {
+    return res.status(400).json({ error: 'Tous les champs sont requis' });
+  }
+
+  try {
+    // Vérification de l'admin
+    const admin = await prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
+      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
+    }
+
+    // Vérifier si le nom existe déjà
+    const existing = await prisma.user.findUnique({ where: { name } });
+    if (existing) {
+      return res.status(400).json({ error: 'Un utilisateur avec ce nom existe déjà' });
+    }
+
+    const newUser = await prisma.user.create({
+      data: {
+        name,
+        pin: hashPin('0000'), // Code par défaut
+        role: 'CASHIER',
+        needsPinReset: true
+      },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        needsPinReset: true
+      }
+    });
+
+    res.status(201).json(newUser);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la création de la caissière' });
+  }
+});
+
+
+// -------------------------------------------------------------
+// CATEGORIES
+// -------------------------------------------------------------
+
+// Récupérer toutes les catégories
+app.get('/api/categories', async (req, res) => {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: { name: 'asc' }
+    });
+    res.json(categories);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la récupération des catégories' });
+  }
+});
+
+// Ajouter une catégorie (Admin requis)
+app.post('/api/categories', async (req, res) => {
+  const { adminId, adminPin, name, color } = req.body;
+
+  if (!adminId || !adminPin || !name) {
+    return res.status(400).json({ error: 'Champs requis manquants' });
+  }
+
+  try {
+    // Vérifier l'admin
+    const admin = await prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
+      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
+    }
+
+    const newCategory = await prisma.category.create({
+      data: {
+        name,
+        color: color || 'bg-blue-500'
+      }
+    });
+
+    res.status(201).json(newCategory);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la création de la catégorie. Le nom est peut-être déjà utilisé.' });
+  }
+});
+
+// Supprimer une catégorie (Admin requis)
+app.delete('/api/categories/:id', async (req, res) => {
+  const { adminId, adminPin } = req.query;
+  const { id } = req.params;
+
+  if (!adminId || !adminPin) {
+    return res.status(400).json({ error: 'Authentification admin requise' });
+  }
+
+  try {
+    // Vérifier l'admin
+    const admin = await prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
+      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
+    }
+
+    await prisma.category.delete({
+      where: { id }
+    });
+
+    res.json({ message: 'Catégorie supprimée avec succès' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la suppression de la catégorie' });
+  }
+});
+
+
+// -------------------------------------------------------------
+// INVOICES (FACTURES)
+// -------------------------------------------------------------
+
+// Liste des factures avec filtres
+app.get('/api/invoices', async (req, res) => {
+  const { date, cashierId, status } = req.query;
+
+  let where = {};
+
+  if (date) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    where.createdAt = {
+      gte: start,
+      lte: end
+    };
+  }
+
+  if (cashierId) {
+    where.createdById = cashierId;
+  }
+
+  if (status) {
+    where.status = status;
+  }
+
+  try {
+    const invoices = await prisma.invoice.findMany({
+      where,
+      include: {
+        createdBy: {
+          select: { name: true }
+        },
+        cancelledBy: {
+          select: { name: true }
+        },
+        items: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+    res.json(invoices);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la récupération des factures' });
+  }
+});
+
+// Créer une facture (Validation de panier)
+app.post('/api/invoices', async (req, res) => {
+  const { totalAmount, paymentMethod, items, createdById } = req.body;
+
+  if (!paymentMethod || !items || !items.length || !createdById) {
+    return res.status(400).json({ error: 'Données de la facture incomplètes' });
+  }
+
+  try {
+    // Utiliser une transaction Prisma pour garantir la concurrence et le format séquentiel sans doublons
+    const newInvoice = await prisma.$transaction(async (tx) => {
+      // Déterminer la date d'aujourd'hui en heure locale
+      const now = new Date();
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Compter le nombre de factures générées aujourd'hui pour calculer le numéro de facture séquentiel
+      const countToday = await tx.invoice.count({
+        where: {
+          createdAt: {
+            gte: startOfDay,
+            lte: endOfDay
+          }
+        }
+      });
+
+      // Formatage du numéro : FAC-YYYYMMDD-XXXX
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const seq = String(countToday + 1).padStart(4, '0');
+      const invoiceNumber = `FAC-${year}${month}${day}-${seq}`;
+
+      // Création de la facture et de ses éléments
+      return await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          totalAmount: parseFloat(totalAmount),
+          paymentMethod,
+          createdById,
+          items: {
+            create: items.map(item => ({
+              categoryName: item.categoryName,
+              price: parseFloat(item.price)
+            }))
+          }
+        },
+        include: {
+          items: true,
+          createdBy: {
+            select: { name: true }
+          }
+        }
+      });
+    });
+
+    res.status(201).json(newInvoice);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erreur lors de la validation de la facture' });
+  }
+});
+
+// Annuler une facture (Admin uniquement)
+app.post('/api/invoices/:id/cancel', async (req, res) => {
+  const { id } = req.params;
+  const { adminId, adminPin, cancellationReason } = req.body;
+
+  if (!adminId || !adminPin || !cancellationReason) {
+    return res.status(400).json({ error: 'Veuillez saisir le code PIN administrateur et le motif d\'annulation.' });
+  }
+
+  try {
+    // Vérification de l'administrateur
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId }
+    });
+
+    if (!admin || admin.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Seul un administrateur peut annuler une facture' });
+    }
+
+    const isValidPin = verifyPin(adminPin, admin.pin);
+    if (!isValidPin) {
+      return res.status(401).json({ error: 'Code PIN administrateur incorrect' });
+    }
+
+    // Vérifier l'état actuel de la facture
+    const invoice = await prisma.invoice.findUnique({
+      where: { id }
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Facture non trouvée' });
+    }
+
+    if (invoice.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'Cette facture est déjà annulée' });
+    }
+
+    // Annuler la facture
+    const updatedInvoice = await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED',
+        cancellationReason,
+        cancelledById: admin.id
+      },
+      include: {
+        createdBy: { select: { name: true } },
+        cancelledBy: { select: { name: true } },
+        items: true
+      }
+    });
+
+    res.json(updatedInvoice);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de l\'annulation de la facture' });
+  }
+});
+
+
+// -------------------------------------------------------------
+// COMPTABILITÉ & STATISTIQUES (DASHBOARD)
+// -------------------------------------------------------------
+app.get('/api/stats', async (req, res) => {
+  try {
+    const now = new Date();
+
+    // -- AUJOURD'HUI --
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(now);
+    endOfToday.setHours(23, 59, 59, 999);
+
+    // -- CETTE SEMAINE (Lundi à Dimanche) --
+    const startOfWeek = new Date(now);
+    const dayOfWeek = startOfWeek.getDay(); // 0 = Dimanche, 1 = Lundi, etc.
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    startOfWeek.setDate(startOfWeek.getDate() + diffToMonday);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    // -- CE MOIS --
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    // Requêtes factures validées pour statistiques
+    const getStatsForRange = async (start, end) => {
+      const invoices = await prisma.invoice.findMany({
+        where: {
+          status: 'VALIDATED',
+          createdAt: {
+            gte: start,
+            lte: end
+          }
+        }
+      });
+
+      let total = 0;
+      let cash = 0;
+      let online = 0;
+      let count = invoices.length;
+
+      invoices.forEach(inv => {
+        total += inv.totalAmount;
+        if (inv.paymentMethod === 'CASH') {
+          cash += inv.totalAmount;
+        } else {
+          online += inv.totalAmount;
+        }
+      });
+
+      return { total, cash, online, count };
+    };
+
+    const statsToday = await getStatsForRange(startOfToday, endOfToday);
+    const statsWeek = await getStatsForRange(startOfWeek, endOfWeek);
+    const statsMonth = await getStatsForRange(startOfMonth, endOfMonth);
+
+    // -- MEILLEURES VENTES (AUJOURD'HUI) --
+    // Liste de tous les items vendus aujourd'hui dans des factures VALIDÉES
+    const itemsToday = await prisma.invoiceItem.findMany({
+      where: {
+        invoice: {
+          status: 'VALIDATED',
+          createdAt: {
+            gte: startOfToday,
+            lte: endOfToday
+          }
+        }
+      }
+    });
+
+    const categoryStats = {};
+    itemsToday.forEach(item => {
+      if (!categoryStats[item.categoryName]) {
+        categoryStats[item.categoryName] = { quantity: 0, revenue: 0 };
+      }
+      categoryStats[item.categoryName].quantity += 1;
+      categoryStats[item.categoryName].revenue += item.price;
+    });
+
+    const topSellingCategories = Object.keys(categoryStats).map(catName => ({
+      name: catName,
+      quantity: categoryStats[catName].quantity,
+      revenue: categoryStats[catName].revenue
+    })).sort((a, b) => b.revenue - a.revenue);
+
+    res.json({
+      today: statsToday,
+      week: statsWeek,
+      month: statsMonth,
+      topSelling: topSellingCategories
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erreur lors de la génération des statistiques' });
+  }
+});
+
+
+// -------------------------------------------------------------
+// SERVIR L'APPLICATION FRONTEND STATIQUE
+// -------------------------------------------------------------
+// Servir les fichiers statiques générés par Vite
+app.use(express.static(path.join(__dirname, 'frontend/dist')));
+
+// Redirection globale vers le client web pour gérer le routing côté client
+app.get('/{*path}', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
+});
+
+// Démarrage du serveur
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`================================================`);
+  console.log(`SERVEUR LOCAL DE CAISSE DÉMARRÉ`);
+  console.log(`URL local Admin (ce PC) : http://localhost:${PORT}`);
+  console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
+  console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
+  console.log(`================================================`);
+});
