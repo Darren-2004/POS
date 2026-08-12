@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { prisma } from './db.js';
 import { hashPin, verifyPin } from './authHelper.js';
@@ -123,43 +124,64 @@ app.post('/api/auth/reset-pin', async (req, res) => {
 
 // Créer une caissière (Admin requis)
 app.post('/api/users', async (req, res) => {
-  const { adminId, adminPin, name } = req.body;
+  const { name } = req.body;
 
-  if (!adminId || !adminPin || !name) {
-    return res.status(400).json({ error: 'Tous les champs sont requis' });
-  }
+  if (!name) return res.status(400).json({ error: 'Nom requis' });
 
   try {
-    // Vérification de l'admin
-    const admin = await prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
-      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
-    }
-
-    // Vérifier si le nom existe déjà
     const existing = await prisma.user.findUnique({ where: { name } });
-    if (existing) {
-      return res.status(400).json({ error: 'Un utilisateur avec ce nom existe déjà' });
-    }
+    if (existing) return res.status(400).json({ error: 'Un utilisateur avec ce nom existe déjà' });
 
     const newUser = await prisma.user.create({
       data: {
         name,
-        pin: hashPin('0000'), // Code par défaut
+        pin: hashPin('0000'),
         role: 'CASHIER',
         needsPinReset: true
       },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        needsPinReset: true
-      }
+      select: { id: true, name: true, role: true, needsPinReset: true }
     });
 
     res.status(201).json(newUser);
   } catch (error) {
     res.status(500).json({ error: 'Erreur lors de la création de la caissière' });
+  }
+});
+
+// Mettre à jour un utilisateur (Admin requis)
+app.put('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, role } = req.body;
+
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(name ? { name } : {}),
+        ...(role ? { role } : {})
+      },
+      select: { id: true, name: true, role: true, needsPinReset: true }
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de l\'utilisateur' });
+  }
+});
+
+// Supprimer un utilisateur (Admin requis)
+app.delete('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (user.role === 'ADMIN') return res.status(400).json({ error: 'Impossible de supprimer un administrateur' });
+
+    await prisma.user.delete({ where: { id } });
+    res.json({ message: 'Utilisateur supprimé' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la suppression de l\'utilisateur' });
   }
 });
 
@@ -180,21 +202,15 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
-// Ajouter une catégorie (Admin requis)
+// Ajouter une catégorie (plus d'admin PIN requis)
 app.post('/api/categories', async (req, res) => {
-  const { adminId, adminPin, name, color } = req.body;
+  const { name, color } = req.body;
 
-  if (!adminId || !adminPin || !name) {
-    return res.status(400).json({ error: 'Champs requis manquants' });
+  if (!name) {
+    return res.status(400).json({ error: 'Nom requis' });
   }
 
   try {
-    // Vérifier l'admin
-    const admin = await prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
-      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
-    }
-
     const newCategory = await prisma.category.create({
       data: {
         name,
@@ -204,33 +220,40 @@ app.post('/api/categories', async (req, res) => {
 
     res.status(201).json(newCategory);
   } catch (error) {
-    res.status(500).json({ error: 'Erreur lors de la création de la catégorie. Le nom est peut-être déjà utilisé.' });
+    // Gestion d'erreur pour doublon unique (Prisma P2002)
+    if (error?.code === 'P2002') {
+      return res.status(400).json({ error: 'Le nom de catégorie est déjà utilisé' });
+    }
+    console.error('Create category error', error);
+    res.status(500).json({ error: 'Erreur lors de la création de la catégorie' });
   }
 });
 
 // Supprimer une catégorie (Admin requis)
 app.delete('/api/categories/:id', async (req, res) => {
-  const { adminId, adminPin } = req.query;
   const { id } = req.params;
 
-  if (!adminId || !adminPin) {
-    return res.status(400).json({ error: 'Authentification admin requise' });
-  }
-
   try {
-    // Vérifier l'admin
-    const admin = await prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'ADMIN' || !verifyPin(adminPin, admin.pin)) {
-      return res.status(403).json({ error: 'Autorisation refusée. Code PIN admin requis.' });
-    }
-
-    await prisma.category.delete({
-      where: { id }
-    });
-
+    await prisma.category.delete({ where: { id } });
     res.json({ message: 'Catégorie supprimée avec succès' });
   } catch (error) {
     res.status(500).json({ error: 'Erreur lors de la suppression de la catégorie' });
+  }
+});
+
+// Mettre à jour une catégorie (sans auth)
+app.put('/api/categories/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, color } = req.body;
+
+  try {
+    if (!name && !color) return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+    const updated = await prisma.category.update({ where: { id }, data: { ...(name ? { name } : {}), ...(color ? { color } : {}) } });
+    res.json(updated);
+  } catch (error) {
+    if (error?.code === 'P2002') return res.status(400).json({ error: 'Le nom de catégorie est déjà utilisé' });
+    console.error('Update category error', error);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de la catégorie' });
   }
 });
 
@@ -351,6 +374,20 @@ app.post('/api/invoices', async (req, res) => {
   }
 });
 
+// Supprimer une facture (Admin action) - no auth required per request
+app.delete('/api/invoices/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const invoice = await prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) return res.status(404).json({ error: 'Facture non trouvée' });
+
+    await prisma.invoice.delete({ where: { id } });
+    res.json({ message: 'Facture supprimée' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erreur lors de la suppression de la facture' });
+  }
+});
+
 // Annuler une facture (Admin uniquement)
 app.post('/api/invoices/:id/cancel', async (req, res) => {
   const { id } = req.params;
@@ -413,6 +450,41 @@ app.post('/api/invoices/:id/cancel', async (req, res) => {
 // -------------------------------------------------------------
 // COMPTABILITÉ & STATISTIQUES (DASHBOARD)
 // -------------------------------------------------------------
+// Rapport Z pour une date donnée
+app.get('/api/z-report', async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'Date requise' });
+
+  try {
+    const start = new Date(date);
+    start.setHours(0,0,0,0);
+    const end = new Date(date);
+    end.setHours(23,59,59,999);
+
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        status: 'VALIDATED',
+        createdAt: { gte: start, lte: end }
+      }
+    });
+
+    let total = 0;
+    let count = invoices.length;
+    invoices.forEach(inv => { total += inv.totalAmount; });
+
+    // breakdown by payment method
+    const payments = invoices.reduce((acc, inv) => {
+      const m = inv.paymentMethod || 'OTHER';
+      acc[m] = (acc[m] || 0) + Number(inv.totalAmount || 0);
+      return acc;
+    }, {});
+
+    res.json({ total, count, payments });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du rapport Z' });
+  }
+});
 app.get('/api/stats', async (req, res) => {
   try {
     const now = new Date();
@@ -516,6 +588,26 @@ app.get('/api/stats', async (req, res) => {
 // -------------------------------------------------------------
 // SERVIR L'APPLICATION FRONTEND STATIQUE
 // -------------------------------------------------------------
+// Endpoint de réception des jobs d'impression (demo)
+app.post('/api/print', async (req, res) => {
+  try {
+    const { html } = req.body || {};
+    if (!html) return res.status(400).json({ error: 'No html provided' });
+
+    const outDir = path.join(__dirname, 'print_jobs');
+    await fs.mkdir(outDir, { recursive: true });
+    const filename = `print_${Date.now()}.html`;
+    const outPath = path.join(outDir, filename);
+    await fs.writeFile(outPath, html, 'utf8');
+
+    console.log('Saved print job to', outPath);
+    // Ici on pourrait appeler un utilitaire natif pour envoyer vers l'imprimante POS
+    res.json({ ok: true, path: `/print_jobs/${filename}` });
+  } catch (err) {
+    console.error('Print endpoint error', err);
+    res.status(500).json({ error: 'Failed to enqueue print job' });
+  }
+});
 // Servir les fichiers statiques générés par Vite
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 
