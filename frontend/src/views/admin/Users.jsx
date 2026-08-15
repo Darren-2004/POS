@@ -11,6 +11,7 @@ export default function Users({ users = [], fetchUsers, currentUser }) {
   const [newName, setNewName] = useState('');
   const [editing, setEditing] = useState(null);
   const [editName, setEditName] = useState('');
+  const [newPin, setNewPin] = useState('');
 
   const createUser = async () => {
     try {
@@ -18,11 +19,12 @@ export default function Users({ users = [], fetchUsers, currentUser }) {
       const res = await fetch(`${API_BASE}/users`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName })
+        body: JSON.stringify({ name: newName, pin: newPin })
       });
       if (res.ok) {
         setShowCreate(false);
         setNewName('');
+        setNewPin('');
         fetchUsers && fetchUsers();
       } else {
         const j = await res.json().catch(() => ({}));
@@ -105,11 +107,21 @@ export default function Users({ users = [], fetchUsers, currentUser }) {
 
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Créer une caissière">
         <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); createUser(); }}>
-          <Field label="Nom">
-            <input autoFocus className={inputCls} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nom de la caissière" />
+          <Field label="Nom de la caissière">
+            <input autoFocus className={inputCls} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ex: Marie" />
           </Field>
-          <div className="flex justify-end">
-            <button type="submit" className="rounded-md bg-white/[0.04] px-3 py-1">Créer</button>
+          <Field label="Code PIN initial (Optionnel, 4 chiffres)">
+            <input
+              type="text"
+              maxLength="6"
+              className={inputCls}
+              value={newPin}
+              onChange={(e) => setNewPin(e.target.value)}
+              placeholder="Ex: 1234 (0000 par défaut)"
+            />
+          </Field>
+          <div className="flex justify-end pt-2">
+            <button type="submit" className="rounded-xl bg-gold text-black font-bold px-4 py-2 text-xs">Créer le compte</button>
           </div>
         </form>
       </Modal>

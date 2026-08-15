@@ -14,8 +14,8 @@ export default function Header({ currentUser, serverOnline, currentView, setCurr
           <ShoppingCart className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <h1 className="text-sm font-semibold leading-none text-foreground truncate">ApexPOS</h1>
-          <p className="mt-0.5 text-[11px] text-foreground/40 hidden sm:block">Terminal Caissier & Management</p>
+          <h1 className="text-sm font-semibold leading-none text-foreground truncate">JOEL SHOP</h1>
+          <p className="mt-0.5 text-[11px] text-foreground/40 hidden sm:block">Système de Caisse</p>
         </div>
       </div>
 

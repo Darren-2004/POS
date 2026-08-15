@@ -1,66 +1,127 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, User as UserIcon, Settings, Award, Search, Printer, Ban, Pencil, Trash2, AlertTriangle } from 'lucide-react';
-import StatusChip from '../components/StatusChip';
-import IconButton from '../components/IconButton';
-import Field, { inputCls } from '../components/Field';
-import Modal from '../components/Modal';
-import { formatFCFA, triggerPrint, cx } from '../utils/helpers';
+import { BarChart3, User as UserIcon, Settings, Award, Clock } from 'lucide-react';
+import { triggerPrint, cx } from '../utils/helpers';
 import Dashboard from './admin/Dashboard';
 import Users from './admin/Users';
 import CategoriesView from './admin/Categories';
 import ZReportView from './admin/ZReport';
-import { API_BASE, CANCEL_REASONS } from '../utils/constants';
+import ReservationsPanel from './admin/ReservationsPanel';
+import { API_BASE } from '../utils/constants';
 
 export default function AdminView({ currentUser, users, categories, fetchUsers, fetchCategories }) {
   const [adminTab, setAdminTab] = useState('dashboard');
   const [stats, setStats] = useState({ today: {}, week: {}, month: {} });
   const [invoices, setInvoices] = useState([]);
-  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
+  const [filterDate, setFilterDate] = useState('');
   const [filterCashier, setFilterCashier] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  const [invoiceSearch, setInvoiceSearch] = useState('');
-
-  // Modals
-  const [categoryToDelete, setCategoryToDelete] = useState(null);
-  const [editingCategory, setEditingCategory] = useState(null);
-  const [invoiceToCancel, setInvoiceToCancel] = useState(null);
-  const [cancelPin, setCancelPin] = useState('');
-  const [cancelReason, setCancelReason] = useState('');
   const [zReportData, setZReportData] = useState(null);
+  const [reservationPayments, setReservationPayments] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [selectedReservationId, setSelectedReservationId] = useState(null);
+  // Independent filters for reservations tab
+  const [reservationFilterDate, setReservationFilterDate] = useState('');
+  const [reservationFilterCashier, setReservationFilterCashier] = useState('');
 
+  // Unified atomic fetch function: ensures invoices, reservationPayments and reservations update together in sync (for dashboard)
+  const refreshDashboardData = async (date = filterDate, cashierId = filterCashier, status = filterStatus) => {
+    try {
+      const params = new URLSearchParams();
+      if (date) params.append('date', date);
+      if (cashierId) params.append('cashierId', cashierId);
+
+      const invParams = new URLSearchParams(params);
+      if (status) invParams.append('status', status);
+
+      const [statsRes, invsRes, resPayRes] = await Promise.all([
+        fetch(`${API_BASE}/stats?${params.toString()}`),
+        fetch(`${API_BASE}/invoices?${invParams.toString()}`),
+        fetch(`${API_BASE}/reservation-payments?${params.toString()}`)
+      ]);
+
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setStats(data && typeof data === 'object' ? data : { today: {}, week: {}, month: {} });
+      }
+
+      if (invsRes.ok) {
+        const data = await invsRes.json();
+        setInvoices(Array.isArray(data) ? data : []);
+      } else {
+        setInvoices([]);
+      }
+
+      if (resPayRes.ok) {
+        const data = await resPayRes.json();
+        setReservationPayments(Array.isArray(data) ? data : []);
+      } else {
+        setReservationPayments([]);
+      }
+    } catch (e) {
+      console.error('refreshDashboardData error:', e);
+    }
+  };
+
+  // Independent fetch function for reservations tab
+  const refreshReservationsData = async (date = reservationFilterDate, cashierId = reservationFilterCashier) => {
+    try {
+      const params = new URLSearchParams();
+      if (date) params.append('date', date);
+      if (cashierId) params.append('cashierId', cashierId);
+
+      const res = await fetch(`${API_BASE}/reservations?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setReservations(Array.isArray(data) ? data : []);
+      } else {
+        setReservations([]);
+      }
+    } catch (e) {
+      console.error('refreshReservationsData error:', e);
+    }
+  };
+
+  // Re-fetch dashboard data atomically whenever dashboard is active or filters change
   useEffect(() => {
-    fetchAdminStats();
-    fetchInvoices();
+    if (adminTab === 'dashboard') {
+      refreshDashboardData(filterDate, filterCashier, filterStatus);
+    }
   }, [adminTab, filterDate, filterCashier, filterStatus]);
 
-  const generateZReport = async (date) => {
+  useEffect(() => {
+    const handleDashboardRefresh = () => refreshDashboardData(filterDate, filterCashier, filterStatus);
+    window.addEventListener('pos:dashboard-refresh', handleDashboardRefresh);
+    return () => window.removeEventListener('pos:dashboard-refresh', handleDashboardRefresh);
+  }, [filterDate, filterCashier, filterStatus]);
+
+  // Re-fetch reservations data independently when reservations tab is active or reservation filters change
+  useEffect(() => {
+    if (adminTab === 'reservations') {
+      setReservations([]);
+      refreshReservationsData(reservationFilterDate, reservationFilterCashier);
+    }
+  }, [adminTab, reservationFilterDate, reservationFilterCashier]); // eslint-disable-line
+
+  const generateZReport = async (filterParams) => {
     try {
-      const d = date || filterDate;
-      const res = await fetch(`${API_BASE}/z-report?date=${d}`);
+      let url = `${API_BASE}/z-report`;
+      if (filterParams?.startDate && filterParams?.endDate) {
+        url += `?startDate=${filterParams.startDate}&endDate=${filterParams.endDate}`;
+      } else if (filterParams?.date || filterDate) {
+        url += `?date=${filterParams?.date || filterDate}`;
+      }
+      const res = await fetch(url);
       if (res.ok) setZReportData(await res.json());
     } catch (e) { console.error(e); }
   };
 
-  const fetchAdminStats = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/stats`);
-      if (res.ok) setStats(await res.json());
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchInvoices = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (filterDate) params.append('date', filterDate);
-      if (filterCashier) params.append('cashierId', filterCashier);
-      if (filterStatus) params.append('status', filterStatus);
-      const res = await fetch(`${API_BASE}/invoices?${params.toString()}`);
-      if (res.ok) setInvoices(await res.json());
-    } catch (e) { console.error(e); }
+  const fetchInvoices = (dateValue = filterDate, cashierValue = filterCashier, statusValue = filterStatus) => {
+    return refreshDashboardData(dateValue, cashierValue, statusValue);
   };
 
   const adminTabs = [
     { id: 'dashboard', label: 'Tableau', icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'reservations', label: 'Réservations', icon: <Clock className="h-4 w-4" /> },
     { id: 'users', label: 'Caissières', icon: <UserIcon className="h-4 w-4" /> },
     { id: 'categories', label: 'Catégories', icon: <Settings className="h-4 w-4" /> },
     { id: 'z-report', label: 'Rapport Z', icon: <Award className="h-4 w-4" /> },
@@ -77,7 +138,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
                 key={tab.id}
                 onClick={() => setAdminTab(tab.id)}
                 className={cx(
-                  'flex w-full items-center gap-2 rounded-2xl px-3 py-3 text-left text-sm font-semibold transition',
+                  'flex w-full items-center gap-2 rounded-2xl px-3 py-3 text-left text-sm font-semibold transition cursor-pointer',
                   adminTab === tab.id ? 'bg-white/[0.08] text-gold' : 'text-foreground/70 hover:bg-white/[0.04]'
                 )}
               >
@@ -97,12 +158,27 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
             <Dashboard
               stats={stats}
               invoices={invoices}
+              reservationPayments={reservationPayments}
+              reservations={reservations}
               users={users}
               filterDate={filterDate}
               setFilterDate={setFilterDate}
               filterCashier={filterCashier}
               setFilterCashier={setFilterCashier}
               fetchInvoices={fetchInvoices}
+            />
+          )}
+
+          {adminTab === 'reservations' && (
+            <ReservationsPanel
+              reservations={reservations}
+              users={users}
+              filterDate={reservationFilterDate}
+              setFilterDate={setReservationFilterDate}
+              filterCashier={reservationFilterCashier}
+              setFilterCashier={setReservationFilterCashier}
+              selectedReservationId={selectedReservationId}
+              setSelectedReservationId={setSelectedReservationId}
             />
           )}
 
