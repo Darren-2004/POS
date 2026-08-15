@@ -1171,22 +1171,40 @@ app.get('/api/stats', async (req, res) => {
       let directCash = 0, directOnline = 0, directOrange = 0;
       let resCash = 0, resOnline = 0, resOrange = 0;
 
+      const normalizeMethod = (m) => String(m || '').trim().toUpperCase();
+
       invoices.forEach(inv => {
         if (!inv.isReservation) {
           count++;
           total += inv.totalAmount;
-          if (inv.paymentMethod === 'ORANGE_MONEY') { orangeMoney += inv.totalAmount; directOrange += inv.totalAmount; }
-          else if (inv.paymentMethod === 'ONLINE')  { online += inv.totalAmount; directOnline += inv.totalAmount; }
-          else                                       { cash += inv.totalAmount; directCash += inv.totalAmount; }
+          const method = normalizeMethod(inv.paymentMethod);
+          if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
+            orangeMoney += inv.totalAmount;
+            directOrange += inv.totalAmount;
+          } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
+            online += inv.totalAmount;
+            directOnline += inv.totalAmount;
+          } else {
+            cash += inv.totalAmount;
+            directCash += inv.totalAmount;
+          }
         }
       });
 
       resPayments.forEach(p => {
         reservationTotal += p.amount;
         total += p.amount;
-        if (p.paymentMethod === 'ORANGE_MONEY') { orangeMoney += p.amount; resOrange += p.amount; }
-        else if (p.paymentMethod === 'ONLINE')  { online += p.amount; resOnline += p.amount; }
-        else                                     { cash += p.amount; resCash += p.amount; }
+        const method = normalizeMethod(p.paymentMethod);
+        if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
+          orangeMoney += p.amount;
+          resOrange += p.amount;
+        } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
+          online += p.amount;
+          resOnline += p.amount;
+        } else {
+          cash += p.amount;
+          resCash += p.amount;
+        }
       });
 
       return {
@@ -1247,22 +1265,39 @@ app.get('/api/stats', async (req, res) => {
         let total = 0, cash = 0, online = 0, orangeMoney = 0, reservationTotal = 0, count = 0;
         let directCash = 0, directOnline = 0, directOrange = 0;
         let resCash = 0, resOnline = 0, resOrange = 0;
+        const normalizeMethod = (m) => String(m || '').trim().toUpperCase();
 
         allInvoices.forEach(inv => {
           if (!inv.isReservation) {
             count++;
             total += inv.totalAmount;
-            if (inv.paymentMethod === 'ORANGE_MONEY') { orangeMoney += inv.totalAmount; directOrange += inv.totalAmount; }
-            else if (inv.paymentMethod === 'ONLINE')  { online += inv.totalAmount; directOnline += inv.totalAmount; }
-            else                                       { cash += inv.totalAmount; directCash += inv.totalAmount; }
+            const method = normalizeMethod(inv.paymentMethod);
+            if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
+              orangeMoney += inv.totalAmount;
+              directOrange += inv.totalAmount;
+            } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
+              online += inv.totalAmount;
+              directOnline += inv.totalAmount;
+            } else {
+              cash += inv.totalAmount;
+              directCash += inv.totalAmount;
+            }
           }
         });
         allResPayments.forEach(p => {
           reservationTotal += p.amount;
           total += p.amount;
-          if (p.paymentMethod === 'ORANGE_MONEY') { orangeMoney += p.amount; resOrange += p.amount; }
-          else if (p.paymentMethod === 'ONLINE')  { online += p.amount; resOnline += p.amount; }
-          else                                     { cash += p.amount; resCash += p.amount; }
+          const method = normalizeMethod(p.paymentMethod);
+          if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
+            orangeMoney += p.amount;
+            resOrange += p.amount;
+          } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
+            online += p.amount;
+            resOnline += p.amount;
+          } else {
+            cash += p.amount;
+            resCash += p.amount;
+          }
         });
         return {
           total, cash, online, orangeMoney, count, reservationTotal,

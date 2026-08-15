@@ -159,7 +159,7 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
         <div className="rounded-2xl bg-white/[0.02] p-4 border border-gold/20 text-sm text-foreground/80 shadow-lg shadow-gold/5">
           <div className="text-[10px] uppercase tracking-[0.24em] text-gold font-semibold flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse"></span>
-            {isFiltered ? 'Total Encaissements' : 'Total Encaissements (Toutes les dates)'}
+            {filterDate ? `Total Encaissements (${formatFilterDate(filterDate)})` : 'Total Encaissements (Toutes les dates)'}
           </div>
           <div className="mt-3 text-2xl font-bold text-gold">{formatFCFA(filteredTotal)}</div>
           <div className="mt-1 text-xs text-foreground/50">{topSummary}</div>
