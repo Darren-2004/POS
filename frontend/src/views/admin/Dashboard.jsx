@@ -47,7 +47,53 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   const invOnlineSales = directValidatedInvoices.filter(inv => normalizeMethod(inv.paymentMethod) === 'ONLINE');
   const invOrangeSales = directValidatedInvoices.filter(inv => normalizeMethod(inv.paymentMethod) === 'ORANGE_MONEY');
   // ── TOP CARDS: authoritative numbers come from stats.filtered (server-computed) ──
-  const sf = (stats && stats.filtered) ? stats.filtered : {};
+  const computeFallbackStats = () => {
+    let total = 0, cash = 0, online = 0, orangeMoney = 0, count = 0, reservationTotal = 0, resPaymentsCount = 0;
+    let directCash = 0, directOnline = 0, directOrange = 0;
+    let resCash = 0, resOnline = 0, resOrange = 0;
+
+    safeInvoices.forEach(inv => {
+      if (normalizeStatus(inv.status) === 'VALIDATED' && !isReservationInvoice(inv)) {
+        count++;
+        const amt = asNumber(inv.totalAmount);
+        total += amt;
+        const m = normalizeMethod(inv.paymentMethod);
+        if (m === 'ORANGE_MONEY' || m === 'ORANGE' || m === 'OM') {
+          orangeMoney += amt; directOrange += amt;
+        } else if (m === 'ONLINE' || m === 'MOBILE_MONEY' || m === 'MOMO' || m === 'WAVE') {
+          online += amt; directOnline += amt;
+        } else {
+          cash += amt; directCash += amt;
+        }
+      }
+    });
+
+    safeResPayments.forEach(p => {
+      resPaymentsCount++;
+      const amt = asNumber(p.amount);
+      reservationTotal += amt;
+      total += amt;
+      const m = normalizeMethod(p.paymentMethod);
+      if (m === 'ORANGE_MONEY' || m === 'ORANGE' || m === 'OM') {
+        orangeMoney += amt; resOrange += amt;
+      } else if (m === 'ONLINE' || m === 'MOBILE_MONEY' || m === 'MOMO' || m === 'WAVE') {
+        online += amt; resOnline += amt;
+      } else {
+        cash += amt; resCash += amt;
+      }
+    });
+
+    return {
+      total, cash, online, orangeMoney, count, reservationTotal,
+      resPaymentsCount, directCash, directOnline, directOrange,
+      resCash, resOnline, resOrange
+    };
+  };
+
+  const sf = (stats && stats.filtered && typeof stats.filtered.total === 'number')
+    ? stats.filtered
+    : computeFallbackStats();
+
   const filteredTotal       = asNumber(sf.total);
   const filteredCashTotal   = asNumber(sf.cash);
   const filteredOnlineTotal = asNumber(sf.online);

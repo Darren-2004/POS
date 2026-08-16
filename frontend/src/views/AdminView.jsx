@@ -39,23 +39,19 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
         fetch(`${API_BASE}/reservation-payments?${params.toString()}`)
       ]);
 
-      if (statsRes.ok) {
+      if (statsRes && statsRes.ok) {
         const data = await statsRes.json();
-        setStats(data && typeof data === 'object' ? data : { today: {}, week: {}, month: {} });
+        if (data && typeof data === 'object') setStats(data);
       }
 
-      if (invsRes.ok) {
+      if (invsRes && invsRes.ok) {
         const data = await invsRes.json();
-        setInvoices(Array.isArray(data) ? data : []);
-      } else {
-        setInvoices([]);
+        if (Array.isArray(data)) setInvoices(data);
       }
 
-      if (resPayRes.ok) {
+      if (resPayRes && resPayRes.ok) {
         const data = await resPayRes.json();
-        setReservationPayments(Array.isArray(data) ? data : []);
-      } else {
-        setReservationPayments([]);
+        if (Array.isArray(data)) setReservationPayments(data);
       }
     } catch (e) {
       console.error('refreshDashboardData error:', e);
