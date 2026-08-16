@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "reset-db": "node reset-db.js",
+    "init-admin": "node init-admin.js"
   },
   "keywords": [],
   "author": "",

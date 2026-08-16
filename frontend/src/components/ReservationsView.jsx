@@ -69,18 +69,22 @@ export default function ReservationsView({ categories = [], currentUser, serverO
     setResItems(prev => prev.map(item => {
       if (item.id !== id) return item;
       if (field === 'categoryName') return { ...item, categoryName: rawValue };
-      if (rawValue === '') return { ...item, [field]: '' };
+      if (rawValue === '' || rawValue === undefined || rawValue === null) {
+        return { ...item, [field]: '' };
+      }
+      const cleanStr = String(rawValue).replace(/[^0-9.]/g, '');
+      if (cleanStr === '') return { ...item, [field]: '' };
       const value = field === 'qty'
-        ? Math.max(0, parseInt(rawValue, 10) || 0)
-        : Math.max(0, parseFloat(rawValue) || 0);
+        ? Math.max(0, parseInt(cleanStr, 10) || 0)
+        : Math.max(0, parseFloat(cleanStr) || 0);
       return { ...item, [field]: value };
     }));
   };
 
   const handleRemoveItem = (id) => setResItems(prev => prev.filter(item => item.id !== id));
 
-  const getResTotal = () => resItems.reduce((sum, i) => sum + ((Number(i.price) || 0) * (Number(i.qty) || 0)), 0);
-  const getAlreadyPaid = () => existingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const getResTotal = () => resItems.reduce((sum, i) => sum + ((parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0)), 0);
+  const getAlreadyPaid = () => existingPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const getRemainingBalance = () => Math.max(0, getResTotal() - getAlreadyPaid());
 
   const [selectedResObject, setSelectedResObject] = useState(null);

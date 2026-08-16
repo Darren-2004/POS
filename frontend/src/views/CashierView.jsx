@@ -37,16 +37,20 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
     setCart(prev => prev.map(item => {
       if (item.id !== id) return item;
       if (field === 'categoryName') return { ...item, categoryName: rawValue };
-      if (rawValue === '') return { ...item, [field]: '' };
+      if (rawValue === '' || rawValue === undefined || rawValue === null) {
+        return { ...item, [field]: '' };
+      }
+      const cleanStr = String(rawValue).replace(/[^0-9.]/g, '');
+      if (cleanStr === '') return { ...item, [field]: '' };
       const value = field === 'qty'
-        ? Math.max(0, parseInt(rawValue, 10) || 0)
-        : Math.max(0, parseFloat(rawValue) || 0);
+        ? Math.max(0, parseInt(cleanStr, 10) || 0)
+        : Math.max(0, parseFloat(cleanStr) || 0);
       return { ...item, [field]: value };
     }));
   };
 
   const handleRemoveFromCart = (id) => setCart(prev => prev.filter(item => item.id !== id));
-  const getCartTotal = () => cart.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.qty) || 0)), 0);
+  const getCartTotal = () => cart.reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.qty, 10) || 0)), 0);
 
   const getCartItemsForServer = () =>
     cart.flatMap(item =>

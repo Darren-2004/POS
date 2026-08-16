@@ -127,24 +127,29 @@ export const triggerPrint = (invoiceData) => {
     doc.open();
     doc.write(fullHtml);
     doc.close();
-    iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-    setTimeout(() => document.body.removeChild(iframe), 1500);
+
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        console.error('Print iframe error:', e);
+      }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 2000);
+    }, 150);
   };
 
+  // Trigger browser print immediately
+  doClientPrint();
+
+  // Send background log to server (non-blocking)
   fetch('/api/print', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html: fullHtml, invoiceData })
-  }).then(res => {
-    if (!res.ok) throw new Error('Print server error');
-    return res.json();
-  }).then(() => {
-    console.info('Print job sent to server');
-  }).catch((err) => {
-    console.warn('Server print failed, falling back to client print', err);
-    doClientPrint();
-  });
+  }).catch(() => {});
 };
 
 export const triggerProformaPrint = (reservation) => {
@@ -164,8 +169,8 @@ export const triggerProformaPrint = (reservation) => {
     </tr>
   `).join('');
 
-  const totalPaid = (reservation.payments || []).reduce((sum, p) => sum + p.amount, 0);
-  const remaining = Math.max(0, reservation.totalAmount - totalPaid);
+  const totalPaid = (reservation.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const remaining = Math.max(0, (Number(reservation.totalAmount) || 0) - totalPaid);
 
   const printHTML = `
     <div style="text-align:center;margin-bottom:6px;font-family:monospace;">
@@ -235,19 +240,27 @@ export const triggerProformaPrint = (reservation) => {
     doc.open();
     doc.write(fullHtml);
     doc.close();
-    iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-    setTimeout(() => document.body.removeChild(iframe), 1500);
+
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        console.error('Print iframe error:', e);
+      }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 2000);
+    }, 150);
   };
 
+  // Trigger browser print immediately
+  doClientPrint();
+
+  // Send background log to server (non-blocking)
   fetch('/api/print', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html: fullHtml, reservation })
-  }).then(res => {
-    if (!res.ok) throw new Error('Print server error');
-    return res.json();
-  }).catch(() => {
-    doClientPrint();
-  });
+  }).catch(() => {});
 };
