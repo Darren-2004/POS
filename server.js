@@ -1505,9 +1505,6 @@ app.post('/api/print', async (req, res) => {
         // Edge is built into Windows 10/11 PCs
         path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
         path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
-        path.join(localAppData, 'Microsoft\\Edge\\Application\\msedge.exe'),
-        `${systemDrive}\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe`,
-        `${systemDrive}\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe`
       ].filter(Boolean);
 
       let browserBin = candidateBrowsers.find(p => {
@@ -1525,15 +1522,49 @@ app.post('/api/print', async (req, res) => {
       }
 
       if (browserBin) {
+        // ─────────────────────────────────────────────────────────
+        // CONFIGURATION RÉSEAU WINDOWS : variables dans .env
+        //   PRINTER_IP   = IP réseau de l'imprimante (ex: 192.168.1.150)
+        //   PRINTER_PORT = Port IPP (défaut: 631)
+        //   PRINTER_NAME = Nom de l'imprimante dans Windows Spooler
+        //
+        // Logique :
+        //  1. Si PRINTER_NAME est défini → utiliser ce nom directement (déjà installée)
+        //  2. Si PRINTER_IP est défini et pas PRINTER_NAME →
+        //     installer auto l'imprimante réseau via PowerShell, puis imprimer
+        //  3. Si rien → imprimante par défaut Windows
+        // ─────────────────────────────────────────────────────────
+        const printerIp    = (process.env.PRINTER_IP   || '').trim();
+        const printerPort  = (process.env.PRINTER_PORT  || '631').trim();
         const rawPrinterName = process.env.PRINTER_NAME || '';
         let cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
 
         // Ignore generic placeholder names from documentation/examples
         const placeholders = ['monimprimantepos', 'nomdevotreimprimante', 'nomexactdevotreimprimante', 'default', 'imprimante', 'pos-80-example'];
         if (placeholders.includes(cleanPrinterName.toLowerCase())) {
-          console.log(`ℹ️ PRINTER_NAME="${cleanPrinterName}" est un nom d'exemple -> Envoi direct sur l'IMPRIMANTE PAR DÉFAUT de Windows.`);
+          console.log(`ℹ️ PRINTER_NAME="${cleanPrinterName}" est un nom d'exemple -> ignoré.`);
           cleanPrinterName = '';
         }
+
+        // Si PRINTER_IP est défini mais pas PRINTER_NAME, on installe auto l'imprimante réseau
+        const resolveNetworkPrinter = () => new Promise((resolve) => {
+          if (!printerIp || cleanPrinterName) return resolve(cleanPrinterName);
+
+          const ippUri = `http://${printerIp}:${printerPort}/ipp/print`;
+          const autoName = `POS-Printer-${printerIp}`;
+          console.log(`🔌 [WIN RÉSEAU] Installation automatique de l'imprimante réseau ${printerIp}...`);
+          // Ajoute l'imprimante IPP réseau dans le spooler Windows (silencieux)
+          const addCmd = `powershell -Command "if (-not (Get-Printer -Name '${autoName}' -ErrorAction SilentlyContinue)) { Add-Printer -ConnectionURI '${ippUri}' -Name '${autoName}' }"`;
+          exec(addCmd, (err) => {
+            if (err) {
+              console.warn(`⚠️ [WIN RÉSEAU] Impossible d'installer l'imprimante auto (${err.message}). Tentative sur l'imprimante par défaut.`);
+              resolve('');
+            } else {
+              console.log(`✅ [WIN RÉSEAU] Imprimante réseau installée sous le nom : ${autoName}`);
+              resolve(autoName);
+            }
+          });
+        });
 
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
         const formattedPdfPath = pdfPath.replace(/\\/g, '/');
@@ -1567,12 +1598,17 @@ app.post('/api/print', async (req, res) => {
           }
 
           // Step 2: Print ONLY if PDF is verified and valid
-          const targetPrinterLog = cleanPrinterName ? `l'imprimante "${cleanPrinterName}"` : "l'imprimante par DÉFAUT de Windows";
+          // Résoudre le nom de l'imprimante (auto-install réseau si PRINTER_IP)
+          const resolvedPrinterName = await resolveNetworkPrinter();
+          const effectivePrinterName = resolvedPrinterName || cleanPrinterName;
+          const targetPrinterLog = effectivePrinterName
+            ? `l'imprimante "${effectivePrinterName}"`
+            : (printerIp ? `réseau ${printerIp}` : "l'imprimante par DÉFAUT de Windows");
           console.log(`🖨️ [IMPRESSION WINDOWS] Envoi du PDF vers ${targetPrinterLog}...`);
 
           // Méthode N°1 : Bibliothèque officielle pdf-to-printer (Moteur SumatraPDF d'impression directe sous Windows)
           console.log(`▶️ Execution Méthode N°1 (pdf-to-printer / SumatraPDF)...`);
-          const ptpOptions = cleanPrinterName ? { printer: cleanPrinterName } : {};
+          const ptpOptions = effectivePrinterName ? { printer: effectivePrinterName } : {};
 
           try {
             await ptp.print(pdfPath, ptpOptions);
@@ -1581,6 +1617,7 @@ app.post('/api/print', async (req, res) => {
           } catch (ptpErr) {
             console.warn(`⚠️ Méthode N°1 (pdf-to-printer) échouée (${ptpErr.message}), tentative via Méthode N°2 (Windows Shell)...`);
           }
+
 
           // Méthode 2: Impression directe via le handler PDF natif Windows
           const printCmd2 = cleanPrinterName
