@@ -1481,9 +1481,11 @@ app.post('/api/print', async (req, res) => {
       }
 
     } else if (process.platform === 'win32') {
+      const localAppData = process.env.LOCALAPPDATA || '';
       const chromePaths = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe')
       ];
       let chromeBin = process.env.CHROME_BIN || null;
       if (!chromeBin) {
@@ -1491,26 +1493,35 @@ app.post('/api/print', async (req, res) => {
           try { require('fs').accessSync(p); return true; } catch { return false; }
         });
       }
+
       if (chromeBin) {
         const printerName = process.env.PRINTER_NAME || '';
-        const chromeCmd = [
-          `"${chromeBin}"`,
-          '--headless=new', '--no-sandbox', '--disable-gpu',
-          '--virtual-time-budget=5000',
-          `--print-to-pdf="${pdfPath}"`,
-          '--no-pdf-header-footer',
-          '--paper-width=3.14961',
-          '--paper-height=20',
-          '--margin-top=0 --margin-bottom=0 --margin-left=0 --margin-right=0',
-          `"file:///${htmlPath.replace(/\\/g, '/')}"`
-        ].join(' ');
-        exec(chromeCmd, (err) => {
-          if (!err) {
-            const lpCmd = printerName
-              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`
-              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`;
-            exec(lpCmd, (lpErr) => { if (lpErr) console.warn('Win32 print warn:', lpErr.message); });
+        const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
+        
+        // Use Chrome's native --print-to-printer flag for 100% silent direct printing on Windows
+        const printerArg = printerName ? `--printer-name="${printerName}"` : '';
+        const chromeCmd = `"${chromeBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+
+        console.log('Executing Windows Chrome direct print:', chromeCmd);
+        exec(chromeCmd, (err, stdout, stderr) => {
+          if (err) {
+            console.warn('Win32 Chrome direct print error:', err.message);
+            // Fallback: PowerShell raw print
+            const fallbackCmd = printerName
+              ? `powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`
+              : `powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`;
+            exec(fallbackCmd, (fbErr) => {
+              if (fbErr) console.warn('Win32 fallback print warn:', fbErr.message);
+            });
+          } else {
+            console.log('✅ Ticket imprimé directement sous Windows sur:', printerName || 'Imprimante par défaut');
           }
+        });
+      } else {
+        console.warn('Chrome non trouvé sur le système Windows. Veuillez installer Google Chrome.');
+        // Fallback si Chrome introuvable
+        exec(`powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`, (err) => {
+          if (err) console.warn('Win32 HTML print warn:', err.message);
         });
       }
     }
