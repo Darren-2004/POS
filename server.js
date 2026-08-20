@@ -1402,6 +1402,17 @@ app.post('/api/print', async (req, res) => {
     console.log('Saved print job to', htmlPath);
 
     if (process.platform === 'linux') {
+      // ─────────────────────────────────────────────────────────
+      // CONFIGURATION RÉSEAU : variables disponibles dans .env
+      //   PRINTER_IP   = Adresse IP réseau de l'imprimante
+      //                  (ex: 192.168.1.150) — obligatoire pour impression réseau
+      //   PRINTER_PORT = Port IPP de l'imprimante (défaut: 631)
+      //   PRINTER_NAME = Nom de file CUPS (optionnel, si déjà configuré dans CUPS)
+      // ─────────────────────────────────────────────────────────
+      const printerIp   = (process.env.PRINTER_IP   || '').trim();
+      const printerPort = (process.env.PRINTER_PORT  || '631').trim();
+      const printerName = (process.env.PRINTER_NAME  || '').trim();
+
       // Detect available Chrome/Chromium binary
       const chromeBins = ['google-chrome', 'chromium', 'chromium-browser'];
       let chromeBin = process.env.CHROME_BIN || null;
@@ -1415,11 +1426,8 @@ app.post('/api/print', async (req, res) => {
         }
       }
 
-      const printerName = process.env.PRINTER_NAME || '';
-      const printerArg  = printerName ? `-d "${printerName}"` : '';
-
       if (chromeBin) {
-        // Step 1: Chrome headless generates PDF (Letter/A4 size — Chrome ignores --paper-width)
+        // Étape 1 : Chrome génère le PDF
         const chromeCmd = [
           `"${chromeBin}"`,
           '--headless=new',
@@ -1436,51 +1444,48 @@ app.post('/api/print', async (req, res) => {
 
         exec(chromeCmd, (chromeErr) => {
           if (chromeErr) {
-            console.warn('Chrome PDF generation failed:', chromeErr.message);
+            console.error('❌ [LINUX] Échec génération PDF par Chrome:', chromeErr.message);
             return;
           }
-          console.log('PDF generated (A4):', pdfPath);
+          console.log('✅ [LINUX] PDF généré :', pdfPath);
 
-          // If PRINTER_NAME is specified in .env, assume thermal printer and use 80mm Ghostscript scaling
-          // Otherwise, send original PDF with fit-to-page so text is large and clear on A4 office printers
-          if (printerName) {
-            const thermalPdfPath = pdfPath.replace('.pdf', '_thermal.pdf');
-            const gsCmd = [
-              'gs',
-              '-q',
-              '-dNOPAUSE',
-              '-dBATCH',
-              '-dSAFER',
-              '-sDEVICE=pdfwrite',
-              '-dFIXEDMEDIA',
-              '-dPDFFitPage',
-              '-g22677x56693',   // 80mm x 200mm in 100ths of points
-              `-sOutputFile="${thermalPdfPath}"`,
-              `"${pdfPath}"`,
-              '2>/dev/null'
-            ].join(' ');
+          // Étape 2 : Envoi vers l'imprimante (réseau IP ou CUPS local)
+          let lpCmd;
 
-            exec(gsCmd, (gsErr) => {
-              const finalPdf = gsErr ? pdfPath : thermalPdfPath;
-              const lpCmd = `lp -d "${printerName}" -o sides=one-sided "${finalPdf}" 2>/dev/null`;
-              exec(lpCmd, (lpErr) => {
-                if (lpErr) console.warn('lp print failed:', lpErr.message);
-                else console.log('✅ Print job sent to thermal printer:', printerName);
-              });
-            });
+          if (printerIp) {
+            // ── IMPRESSION RÉSEAU via IPP (PRINTER_IP défini dans .env) ──
+            // Fonctionnement : lp envoie le PDF directement sur l'IP réseau de l'imprimante
+            // sans avoir besoin de la configurer dans CUPS au préalable.
+            console.log(`🖨️ [LINUX RÉSEAU] Envoi vers ${printerIp}:${printerPort} ...`);
+            if (printerName) {
+              // IPP avec nom de file spécifique : ipp://IP:PORT/printers/NOM
+              lpCmd = `lp -h "${printerIp}:${printerPort}" -d "${printerName}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+            } else {
+              // IPP direct sur l'imprimante par défaut exposée par l'hôte distant
+              lpCmd = `lp -h "${printerIp}:${printerPort}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+            }
+          } else if (printerName) {
+            // ── IMPRESSION CUPS LOCAL (PRINTER_NAME défini dans .env) ──
+            console.log(`🖨️ [LINUX CUPS] Envoi vers la file CUPS : ${printerName} ...`);
+            lpCmd = `lp -d "${printerName}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
           } else {
-            // Default printer (A4 / office printer): print full PDF scaled to page for maximum readability
-            const lpCmd = `lp -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
-            exec(lpCmd, (lpErr) => {
-              if (lpErr) console.warn('lp print failed:', lpErr.message);
-              else console.log('✅ Print job sent to default printer (scaled to page)');
-            });
+            // ── IMPRIMANTE PAR DÉFAUT CUPS (aucune config) ──
+            console.log(`🖨️ [LINUX] Envoi vers l'imprimante CUPS par défaut ...`);
+            lpCmd = `lp -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
           }
+
+          exec(lpCmd, (lpErr) => {
+            if (lpErr) {
+              console.error(`❌ [LINUX] Échec impression (${lpCmd}) :`, lpErr.message);
+            } else {
+              const dest = printerIp ? `${printerIp}:${printerPort}` : (printerName || 'imprimante par défaut');
+              console.log(`✅ [LINUX] Ticket envoyé avec succès vers ${dest}`);
+            }
+          });
         });
 
       } else {
-        // Chrome not found — warn
-        console.warn('No Chrome/Chromium found. Install with: sudo apt-get install -y google-chrome-stable');
+        console.warn('⚠️ [LINUX] Aucun Chrome/Chromium trouvé. Installez-le via : sudo apt-get install -y google-chrome-stable');
       }
 
     } else if (process.platform === 'win32') {
