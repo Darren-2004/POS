@@ -1485,19 +1485,22 @@ app.post('/api/print', async (req, res) => {
       const localAppData = process.env.LOCALAPPDATA || '';
       const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
       const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+      const systemDrive = process.env.SystemDrive || 'C:';
 
       const candidateBrowsers = [
         process.env.CHROME_BIN,
         path.join(programFiles, 'Google\\Chrome\\Application\\chrome.exe'),
         path.join(programFilesX86, 'Google\\Chrome\\Application\\chrome.exe'),
         path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'),
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        // Edge is built into 100% of Windows 10/11 PCs and supports --print-to-pdf and --print-to-printer
+        `${systemDrive}\\Program Files\\Google\\Chrome\\Application\\chrome.exe`,
+        `${systemDrive}\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe`,
+        `${systemDrive}\\ProgramData\\Google\\Chrome\\Application\\chrome.exe`,
+        // Edge is built into Windows 10/11 PCs
         path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
         path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
-        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+        path.join(localAppData, 'Microsoft\\Edge\\Application\\msedge.exe'),
+        `${systemDrive}\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe`,
+        `${systemDrive}\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe`
       ].filter(Boolean);
 
       let browserBin = candidateBrowsers.find(p => {
@@ -1517,35 +1520,34 @@ app.post('/api/print', async (req, res) => {
       if (browserBin) {
         const printerName = process.env.PRINTER_NAME || '';
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
+        const formattedPdfPath = pdfPath.replace(/\\/g, '/');
 
-        // Direct Chromium printing to Windows printer
-        // Chrome/Edge renders the HTML @page { size: 80mm 300mm; margin: 0mm; } directly to thermal paper width
-        const printerArg = printerName ? `--printer-name="${printerName}"` : '';
-        const printHtmlCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+        // Step 1: Always generate PDF first
+        const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
 
-        console.log('Executing Windows direct print using:', browserBin);
-        exec(printHtmlCmd, (err) => {
-          if (err) {
-            console.warn('Win32 direct HTML print error, retrying via PDF:', err.message);
-            
-            // Fallback: render to PDF then print
-            const formattedPdfPath = pdfPath.replace(/\\/g, '/');
-            const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
-            exec(generatePdfCmd, (pdfErr) => {
-              if (!pdfErr) {
-                const printPdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${formattedPdfPath}"`;
-                exec(printPdfCmd, (pErr) => {
-                  if (pErr) console.warn('Win32 PDF fallback print error:', pErr.message);
-                  else console.log('✅ Ticket PDF imprimé proprement sous Windows');
-                });
-              }
-            });
+        console.log('Generating PDF on Windows using:', browserBin);
+        exec(generatePdfCmd, (pdfErr) => {
+          if (pdfErr) {
+            console.warn('PDF generation failed on Windows:', pdfErr.message);
           } else {
-            console.log('✅ Ticket imprimé à 100% de largeur sous Windows sur:', printerName || 'Imprimante par défaut');
+            console.log('✅ Fichier PDF généré avec succès:', pdfPath);
           }
+
+          // Step 2: Print ticket to thermal printer
+          const printerArg = printerName ? `--printer-name="${printerName}"` : '';
+          const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+
+          console.log('Executing Windows direct print using:', browserBin);
+          exec(printCmd, (err) => {
+            if (err) {
+              console.warn('Win32 direct print error:', err.message);
+            } else {
+              console.log('✅ Ticket imprimé silencieusement sous Windows sur:', printerName || 'Imprimante par défaut');
+            }
+          });
         });
       } else {
-        console.warn('Ni Chrome ni Edge n\'ont été trouvés sous Windows.');
+        console.warn('Ni Chrome ni Edge n\'ont été trouvés sous Windows. Veuillez installer Google Chrome.');
       }
     }
 
