@@ -1534,14 +1534,22 @@ app.post('/api/print', async (req, res) => {
             console.log('✅ Fichier PDF généré avec succès:', pdfPath);
           }
 
-          // Step 2: Print ticket to thermal printer
+          // Step 2: Print ticket PDF directly to thermal printer (silent, zero window)
           const printerArg = printerName ? `--printer-name="${printerName}"` : '';
-          const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+          const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
 
-          console.log('Executing Windows direct print using:', browserBin);
+          console.log('Executing Windows direct PDF print:', printCmd);
           exec(printCmd, (err) => {
             if (err) {
-              console.warn('Win32 direct print error:', err.message);
+              console.warn('Win32 direct PDF print error, attempting fallback:', err.message);
+              // Fallback: PowerShell silent PDF print command
+              const fallbackCmd = printerName
+                ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -ArgumentList '/t', '${printerName}' -NoNewWindow -Wait"`
+                : `powershell -Command "Start-Process -FilePath '${pdfPath}' -ArgumentList '/p' -NoNewWindow -Wait"`;
+              exec(fallbackCmd, (fbErr) => {
+                if (fbErr) console.warn('Win32 fallback print warn:', fbErr.message);
+                else console.log('✅ Ticket imprimé via PowerShell fallback');
+              });
             } else {
               console.log('✅ Ticket imprimé silencieusement sous Windows sur:', printerName || 'Imprimante par défaut');
             }
