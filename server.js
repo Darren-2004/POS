@@ -1520,52 +1520,86 @@ app.post('/api/print', async (req, res) => {
 
       if (browserBin) {
         const rawPrinterName = process.env.PRINTER_NAME || '';
-        const cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
+        let cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
+
+        // Ignore generic placeholder names from documentation/examples
+        const placeholders = ['monimprimantepos', 'nomdevotreimprimante', 'nomexactdevotreimprimante', 'default', 'imprimante', 'pos-80-example'];
+        if (placeholders.includes(cleanPrinterName.toLowerCase())) {
+          console.log(`ℹ️ PRINTER_NAME="${cleanPrinterName}" est un nom d'exemple -> Envoi direct sur l'IMPRIMANTE PAR DÉFAUT de Windows.`);
+          cleanPrinterName = '';
+        }
+
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
         const formattedPdfPath = pdfPath.replace(/\\/g, '/');
 
-        // Step 1: Generate PDF first
+        // Step 1: Generate PDF first using Chromium headless
         const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
 
-        console.log('Generating PDF on Windows using:', browserBin);
-        exec(generatePdfCmd, (pdfErr) => {
+        console.log(`🌐 [CHROME HEADLESS] Génération du PDF via : ${browserBin}`);
+        exec(generatePdfCmd, async (pdfErr) => {
           if (pdfErr) {
-            console.warn('PDF generation failed on Windows:', pdfErr.message);
-          } else {
-            console.log('✅ Fichier PDF généré avec succès:', pdfPath);
+            console.error('⛔ [BLOCAGE IMPRESSION] Échec de la génération du PDF par Chrome:', pdfErr.message);
+            return;
           }
 
-          // Step 2: 3-tier Windows silent print execution
-          const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
+          // VERIFICATION ET SÉCURITÉ : Le fichier doit exister et être un PDF non vide
+          if (!existsSync(pdfPath) || !pdfPath.endsWith('.pdf')) {
+            console.error('⛔ [BLOCAGE IMPRESSION] ERREUR : Le fichier à imprimer N\'EST PAS un fichier PDF valide ou est introuvable. Impression annulée.');
+            return;
+          }
 
-          // Tier 1: Chromium --headless=old
-          const tier1Cmd = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
-          console.log('Executing Windows Tier 1 print:', tier1Cmd);
-
-          exec(tier1Cmd, (err1, stdout1, stderr1) => {
-            if (!err1) {
-              console.log('✅ Ticket imprimé silencieusement (Tier 1) sur:', cleanPrinterName || 'Imprimante par défaut');
+          try {
+            const stats = await fs.stat(pdfPath);
+            if (stats.size === 0) {
+              console.error('⛔ [BLOCAGE IMPRESSION] ERREUR : Fichier PDF généré de taille 0 octet. Impression annulée.');
               return;
             }
-            console.warn('Tier 1 print failed, trying Tier 2 (PowerShell PrintTo):', err1?.message || stderr1);
+            console.log(`✅ [PDF VALIDE] Fichier PDF créé avec succès : ${pdfPath} (${(stats.size / 1024).toFixed(2)} KB)`);
+          } catch (e) {
+            console.error('⛔ [BLOCAGE IMPRESSION] Erreur d\'accès au fichier PDF :', e.message);
+            return;
+          }
 
-            // Tier 2: PowerShell PrintTo verb
-            const tier2Cmd = cleanPrinterName
-              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
-              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+          // Step 2: Print ONLY if PDF is verified and valid
+          const targetPrinterLog = cleanPrinterName ? `l'imprimante "${cleanPrinterName}"` : "l'imprimante par DÉFAUT de Windows";
+          console.log(`🖨️ [IMPRESSION WINDOWS] Envoi du PDF vers ${targetPrinterLog}...`);
 
-            exec(tier2Cmd, (err2, stdout2, stderr2) => {
-              if (!err2) {
-                console.log('✅ Ticket imprimé silencieusement (Tier 2 PowerShell) sur:', cleanPrinterName || 'Imprimante par défaut');
+          const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
+
+          // Méthode A: Chromium Direct PDF print
+          const printCmdA = `"${browserBin}" --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+          console.log(`▶️ Execution Méthode A : ${printCmdA}`);
+
+          exec(printCmdA, (errA) => {
+            if (!errA) {
+              console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis au spooler Windows pour ${targetPrinterLog}`);
+              return;
+            }
+            console.warn(`⚠️ Méthode A échouée (${errA.message}), passage à la Méthode B...`);
+
+            // Méthode B: Chromium --headless=old
+            const printCmdB = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+            console.log(`▶️ Execution Méthode B : ${printCmdB}`);
+
+            exec(printCmdB, (errB) => {
+              if (!errB) {
+                console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis (Méthode B) pour ${targetPrinterLog}`);
                 return;
               }
-              console.warn('Tier 2 print failed, trying Tier 3 (Chromium HTML direct):', err2?.message || stderr2);
+              console.warn(`⚠️ Méthode B échouée (${errB?.message}), passage à la Méthode C (PowerShell)...`);
 
-              // Tier 3: Chromium HTML direct print
-              const tier3Cmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
-              exec(tier3Cmd, (err3) => {
-                if (err3) console.warn('Tier 3 print warn:', err3.message);
-                else console.log('✅ Ticket imprimé silencieusement (Tier 3 HTML)');
+              // Méthode C: Windows PowerShell PrintTo / Print
+              const printCmdC = cleanPrinterName
+                ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
+                : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+
+              console.log(`▶️ Execution Méthode C : ${printCmdC}`);
+              exec(printCmdC, (errC) => {
+                if (!errC) {
+                  console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis via PowerShell pour ${targetPrinterLog}`);
+                } else {
+                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le PDF sur l'imprimante : ${errC?.message}`);
+                }
               });
             });
           });
