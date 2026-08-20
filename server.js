@@ -1572,40 +1572,40 @@ app.post('/api/print', async (req, res) => {
 
           const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
 
-          // Méthode A: Chromium --headless=old (Obligatoire sous Windows pour éjecter le papier physiquement)
-          const printCmdA = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
-          console.log(`▶️ Execution Méthode A (--headless=old) : ${printCmdA}`);
+          // Méthode 1: Impression directe via le handler PDF natif Windows (Exactement ce qui se passe quand vous ouvrez le PDF)
+          const printCmd1 = cleanPrinterName
+            ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
+            : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
 
-          exec(printCmdA, (errA) => {
-            if (!errA) {
-              console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis au spooler et éjecté sur ${targetPrinterLog}`);
+          console.log(`▶️ Execution Méthode 1 (Windows Native Shell Print) : ${printCmd1}`);
+
+          exec(printCmd1, (err1) => {
+            if (!err1) {
+              console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via le Shell Windows sur ${targetPrinterLog}`);
               return;
             }
-            console.warn(`⚠️ Méthode A échouée (${errA.message}), passage à la Méthode B (PowerShell Direct)...`);
+            console.warn(`⚠️ Méthode 1 (PrintTo) échouée (${err1.message}), tentative Méthode 2 (Verb Print)...`);
 
-            // Méthode B: Windows PowerShell Direct Print
-            const printCmdB = cleanPrinterName
-              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
-              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+            // Méthode 2: Windows Shell Verb Print par défaut
+            const printCmd2 = `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+            console.log(`▶️ Execution Méthode 2 : ${printCmd2}`);
 
-            console.log(`▶️ Execution Méthode B : ${printCmdB}`);
-            exec(printCmdB, (errB) => {
-              if (!errB) {
-                console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis via PowerShell pour ${targetPrinterLog}`);
+            exec(printCmd2, (err2) => {
+              if (!err2) {
+                console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via Verb Print sur ${targetPrinterLog}`);
                 return;
               }
-              console.warn(`⚠️ Méthode B échouée (${errB?.message}), passage à la Méthode C (Out-Printer)...`);
+              console.warn(`⚠️ Méthode 2 échouée (${err2?.message}), tentative Méthode 3 (Chromium Direct)...`);
 
-              // Méthode C: PowerShell Out-Printer sur HTML
-              const printerNameOpt = cleanPrinterName ? `-Name '${cleanPrinterName}'` : '';
-              const printCmdC = `powershell -Command "Get-Content -Path '${htmlPath}' -Raw | Out-Printer ${printerNameOpt}"`;
+              // Méthode 3: Chromium Direct Print
+              const printCmd3 = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+              console.log(`▶️ Execution Méthode 3 : ${printCmd3}`);
 
-              console.log(`▶️ Execution Méthode C : ${printCmdC}`);
-              exec(printCmdC, (errC) => {
-                if (!errC) {
-                  console.log(`✅ [SUCCÈS IMPRESSION] Le ticket a été transmis via Out-Printer pour ${targetPrinterLog}`);
+              exec(printCmd3, (err3) => {
+                if (!err3) {
+                  console.log(`✅ [SUCCÈS IMPRESSION] Ticket imprimé via Chromium Direct pour ${targetPrinterLog}`);
                 } else {
-                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${errC?.message}`);
+                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${err3?.message}`);
                 }
               });
             });
