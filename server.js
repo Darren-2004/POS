@@ -1519,11 +1519,12 @@ app.post('/api/print', async (req, res) => {
       }
 
       if (browserBin) {
-        const printerName = process.env.PRINTER_NAME || '';
+        const rawPrinterName = process.env.PRINTER_NAME || '';
+        const cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
         const formattedPdfPath = pdfPath.replace(/\\/g, '/');
 
-        // Step 1: Always generate PDF first
+        // Step 1: Generate PDF first
         const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
 
         console.log('Generating PDF on Windows using:', browserBin);
@@ -1534,25 +1535,39 @@ app.post('/api/print', async (req, res) => {
             console.log('✅ Fichier PDF généré avec succès:', pdfPath);
           }
 
-          // Step 2: Print ticket PDF directly to thermal printer (silent, zero window)
-          const printerArg = printerName ? `--printer-name="${printerName}"` : '';
-          const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+          // Step 2: 3-tier bulletproof Windows print execution
+          const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
 
-          console.log('Executing Windows direct PDF print:', printCmd);
-          exec(printCmd, (err) => {
-            if (err) {
-              console.warn('Win32 direct PDF print error, attempting fallback:', err.message);
-              // Fallback: PowerShell silent PDF print command
-              const fallbackCmd = printerName
-                ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -ArgumentList '/t', '${printerName}' -NoNewWindow -Wait"`
-                : `powershell -Command "Start-Process -FilePath '${pdfPath}' -ArgumentList '/p' -NoNewWindow -Wait"`;
-              exec(fallbackCmd, (fbErr) => {
-                if (fbErr) console.warn('Win32 fallback print warn:', fbErr.message);
-                else console.log('✅ Ticket imprimé via PowerShell fallback');
-              });
-            } else {
-              console.log('✅ Ticket imprimé silencieusement sous Windows sur:', printerName || 'Imprimante par défaut');
+          // Tier 1: Chromium --headless=old (Chrome/Edge native print engine)
+          const tier1Cmd = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+          console.log('Executing Windows Tier 1 print:', tier1Cmd);
+
+          exec(tier1Cmd, (err1) => {
+            if (!err1) {
+              console.log('✅ Ticket imprimé silencieusement (Tier 1) sur:', cleanPrinterName || 'Imprimante par défaut');
+              return;
             }
+            console.warn('Tier 1 print failed, trying Tier 2 (PowerShell PrintTo):', err1.message);
+
+            // Tier 2: Windows PowerShell PrintTo verb
+            const tier2Cmd = cleanPrinterName
+              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
+              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+
+            exec(tier2Cmd, (err2) => {
+              if (!err2) {
+                console.log('✅ Ticket imprimé silencieusement (Tier 2 PowerShell) sur:', cleanPrinterName || 'Imprimante par défaut');
+                return;
+              }
+              console.warn('Tier 2 print failed, trying Tier 3 (Chromium HTML direct):', err2.message);
+
+              // Tier 3: Chromium HTML direct print
+              const tier3Cmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+              exec(tier3Cmd, (err3) => {
+                if (err3) console.warn('Tier 3 print warn:', err3.message);
+                else console.log('✅ Ticket imprimé silencieusement (Tier 3 HTML)');
+              });
+            });
           });
         });
       } else {
