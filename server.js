@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { prisma } from './db.js';
 import { hashPin, verifyPin } from './authHelper.js';
+import ptp from 'pdf-to-printer';
 
 dotenv.config();
 
@@ -1564,45 +1565,43 @@ app.post('/api/print', async (req, res) => {
           const targetPrinterLog = cleanPrinterName ? `l'imprimante "${cleanPrinterName}"` : "l'imprimante par DÉFAUT de Windows";
           console.log(`🖨️ [IMPRESSION WINDOWS] Envoi du PDF vers ${targetPrinterLog}...`);
 
-          const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
+          // Méthode N°1 : Bibliothèque officielle pdf-to-printer (Moteur SumatraPDF d'impression directe sous Windows)
+          console.log(`▶️ Execution Méthode N°1 (pdf-to-printer / SumatraPDF)...`);
+          const ptpOptions = cleanPrinterName ? { printer: cleanPrinterName } : {};
 
-          // Méthode 1: Impression directe via le handler PDF natif Windows (Simule le clic imprimer)
-          const printCmd1 = cleanPrinterName
+          try {
+            await ptp.print(pdfPath, ptpOptions);
+            console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via pdf-to-printer sur ${targetPrinterLog}`);
+            return;
+          } catch (ptpErr) {
+            console.warn(`⚠️ Méthode N°1 (pdf-to-printer) échouée (${ptpErr.message}), tentative via Méthode N°2 (Windows Shell)...`);
+          }
+
+          // Méthode 2: Impression directe via le handler PDF natif Windows
+          const printCmd2 = cleanPrinterName
             ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"'" `
             : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`;
 
-          console.log(`▶️ Execution Méthode 1 (Windows Native Shell Print) : ${printCmd1}`);
+          console.log(`▶️ Execution Méthode 2 (Windows Native Shell Print) : ${printCmd2}`);
 
-          exec(printCmd1, (err1) => {
-            if (!err1) {
+          exec(printCmd2, (err2) => {
+            if (!err2) {
               console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via le Shell Windows sur ${targetPrinterLog}`);
               return;
             }
-            console.warn(`⚠️ Méthode 1 échouée (${err1.message}), tentative Méthode 2 (Chromium Direct)...`);
+            console.warn(`⚠️ Méthode 2 échouée (${err2.message}), tentative Méthode 3 (Chromium Direct)...`);
 
-            // Méthode 2: Chromium Direct PDF Print (--headless=old)
-            const printCmd2 = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
-            console.log(`▶️ Execution Méthode 2 (Chromium Direct) : ${printCmd2}`);
+            // Méthode 3: Chromium Direct PDF Print (--headless=old)
+            const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
+            const printCmd3 = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+            console.log(`▶️ Execution Méthode 3 (Chromium Direct) : ${printCmd3}`);
 
-            exec(printCmd2, (err2) => {
-              if (!err2) {
+            exec(printCmd3, (err3) => {
+              if (!err3) {
                 console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via Chromium Direct sur ${targetPrinterLog}`);
-                return;
+              } else {
+                console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${err3?.message}`);
               }
-              console.warn(`⚠️ Méthode 2 échouée (${err2?.message}), tentative Méthode 3 (PowerShell Out-Printer)...`);
-
-              // Méthode 3: PowerShell Out-Printer sur HTML
-              const printerNameOpt = cleanPrinterName ? `-Name '${cleanPrinterName}'` : '';
-              const printCmd3 = `powershell -Command "Get-Content -Path '${htmlPath}' -Raw | Out-Printer ${printerNameOpt}"`;
-              console.log(`▶️ Execution Méthode 3 (Out-Printer) : ${printCmd3}`);
-
-              exec(printCmd3, (err3) => {
-                if (!err3) {
-                  console.log(`✅ [SUCCÈS IMPRESSION] Ticket imprimé via Out-Printer sur ${targetPrinterLog}`);
-                } else {
-                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${err3?.message}`);
-                }
-              });
             });
           });
         });
