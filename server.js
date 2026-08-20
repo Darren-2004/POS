@@ -1564,41 +1564,48 @@ app.post('/api/print', async (req, res) => {
           const targetPrinterLog = cleanPrinterName ? `l'imprimante "${cleanPrinterName}"` : "l'imprimante par DÉFAUT de Windows";
           console.log(`🖨️ [IMPRESSION WINDOWS] Envoi du PDF vers ${targetPrinterLog}...`);
 
+          // Auto-unpause Windows print queues if printer was stuck
+          try {
+            const { execSync } = await import('child_process');
+            execSync('powershell -Command "Get-Printer 2>NUL | Where-Object {$_.PrinterStatus -eq \'Paused\'} | Resume-Printer 2>NUL"');
+          } catch {}
+
           const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
 
-          // Méthode A: Chromium Direct PDF print
-          const printCmdA = `"${browserBin}" --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
-          console.log(`▶️ Execution Méthode A : ${printCmdA}`);
+          // Méthode A: Chromium --headless=old (Obligatoire sous Windows pour éjecter le papier physiquement)
+          const printCmdA = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+          console.log(`▶️ Execution Méthode A (--headless=old) : ${printCmdA}`);
 
           exec(printCmdA, (errA) => {
             if (!errA) {
-              console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis au spooler Windows pour ${targetPrinterLog}`);
+              console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis au spooler et éjecté sur ${targetPrinterLog}`);
               return;
             }
-            console.warn(`⚠️ Méthode A échouée (${errA.message}), passage à la Méthode B...`);
+            console.warn(`⚠️ Méthode A échouée (${errA.message}), passage à la Méthode B (PowerShell Direct)...`);
 
-            // Méthode B: Chromium --headless=old
-            const printCmdB = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+            // Méthode B: Windows PowerShell Direct Print
+            const printCmdB = cleanPrinterName
+              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
+              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+
             console.log(`▶️ Execution Méthode B : ${printCmdB}`);
-
             exec(printCmdB, (errB) => {
               if (!errB) {
-                console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis (Méthode B) pour ${targetPrinterLog}`);
+                console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis via PowerShell pour ${targetPrinterLog}`);
                 return;
               }
-              console.warn(`⚠️ Méthode B échouée (${errB?.message}), passage à la Méthode C (PowerShell)...`);
+              console.warn(`⚠️ Méthode B échouée (${errB?.message}), passage à la Méthode C (Out-Printer)...`);
 
-              // Méthode C: Windows PowerShell PrintTo / Print
-              const printCmdC = cleanPrinterName
-                ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
-                : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
+              // Méthode C: PowerShell Out-Printer sur HTML
+              const printerNameOpt = cleanPrinterName ? `-Name '${cleanPrinterName}'` : '';
+              const printCmdC = `powershell -Command "Get-Content -Path '${htmlPath}' -Raw | Out-Printer ${printerNameOpt}"`;
 
               console.log(`▶️ Execution Méthode C : ${printCmdC}`);
               exec(printCmdC, (errC) => {
                 if (!errC) {
-                  console.log(`✅ [SUCCÈS IMPRESSION] Le fichier PDF a été transmis via PowerShell pour ${targetPrinterLog}`);
+                  console.log(`✅ [SUCCÈS IMPRESSION] Le ticket a été transmis via Out-Printer pour ${targetPrinterLog}`);
                 } else {
-                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le PDF sur l'imprimante : ${errC?.message}`);
+                  console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${errC?.message}`);
                 }
               });
             });
