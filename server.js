@@ -1535,31 +1535,31 @@ app.post('/api/print', async (req, res) => {
             console.log('✅ Fichier PDF généré avec succès:', pdfPath);
           }
 
-          // Step 2: 3-tier bulletproof Windows print execution
+          // Step 2: 3-tier Windows silent print execution
           const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
 
-          // Tier 1: Chromium --headless=old (Chrome/Edge native print engine)
+          // Tier 1: Chromium --headless=old
           const tier1Cmd = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
           console.log('Executing Windows Tier 1 print:', tier1Cmd);
 
-          exec(tier1Cmd, (err1) => {
+          exec(tier1Cmd, (err1, stdout1, stderr1) => {
             if (!err1) {
               console.log('✅ Ticket imprimé silencieusement (Tier 1) sur:', cleanPrinterName || 'Imprimante par défaut');
               return;
             }
-            console.warn('Tier 1 print failed, trying Tier 2 (PowerShell PrintTo):', err1.message);
+            console.warn('Tier 1 print failed, trying Tier 2 (PowerShell PrintTo):', err1?.message || stderr1);
 
-            // Tier 2: Windows PowerShell PrintTo verb
+            // Tier 2: PowerShell PrintTo verb
             const tier2Cmd = cleanPrinterName
               ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"' -NoNewWindow -Wait"`
               : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print -NoNewWindow -Wait"`;
 
-            exec(tier2Cmd, (err2) => {
+            exec(tier2Cmd, (err2, stdout2, stderr2) => {
               if (!err2) {
                 console.log('✅ Ticket imprimé silencieusement (Tier 2 PowerShell) sur:', cleanPrinterName || 'Imprimante par défaut');
                 return;
               }
-              console.warn('Tier 2 print failed, trying Tier 3 (Chromium HTML direct):', err2.message);
+              console.warn('Tier 2 print failed, trying Tier 3 (Chromium HTML direct):', err2?.message || stderr2);
 
               // Tier 3: Chromium HTML direct print
               const tier3Cmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
@@ -1579,6 +1579,31 @@ app.post('/api/print', async (req, res) => {
   } catch (err) {
     console.error('Print endpoint error', err);
     res.status(500).json({ error: 'Failed to enqueue print job' });
+  }
+});
+
+// Diagnostic route: List Windows / Linux installed printers
+app.get('/api/printers', async (req, res) => {
+  try {
+    const { exec } = await import('child_process');
+    if (process.platform === 'win32') {
+      exec('powershell -Command "Get-CimInstance Win32_Printer | Select-Object Name, Default, PrinterStatus | ConvertTo-Json"', (err, stdout) => {
+        if (err) return res.status(500).json({ error: err.message });
+        try {
+          const printers = JSON.parse(stdout);
+          res.json({ configured: process.env.PRINTER_NAME || 'Default', printers });
+        } catch {
+          res.json({ configured: process.env.PRINTER_NAME || 'Default', raw: stdout });
+        }
+      });
+    } else {
+      exec('lpstat -p', (err, stdout) => {
+        if (err) return res.json({ configured: process.env.PRINTER_NAME || 'Default', printers: [] });
+        res.json({ configured: process.env.PRINTER_NAME || 'Default', raw: stdout });
+      });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 // Servir les fichiers statiques générés par Vite
