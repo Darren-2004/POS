@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { formatFCFA, getTodayDateStr, cx } from '../../utils/helpers';
-import { RotateCcw, Calendar } from 'lucide-react';
+import { formatFCFA, getTodayDateStr, triggerProformaPrint, cx } from '../../utils/helpers';
+import { RotateCcw, Calendar, Printer } from 'lucide-react';
 
 export default function ReservationsPanel({
   reservations = [],
@@ -168,9 +168,20 @@ export default function ReservationsPanel({
                         <td className="p-3 text-right font-mono text-[11px] text-gold">{formatFCFA(res.totalAmount)}</td>
                         <td className="p-3 text-right font-mono text-[11px] text-emerald-400">{formatFCFA(totalPaid)}</td>
                         <td className="p-3">
-                          <span className={cx('inline-flex rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider', res.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                            {res.status === 'COMPLETED' ? 'Terminée' : 'En cours'}
-                          </span>
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <span className={cx('inline-flex rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider', res.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
+                              {res.status === 'COMPLETED' ? 'Terminée' : 'En cours'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => triggerProformaPrint(res)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gold/15 hover:bg-gold/30 text-gold text-[10px] font-bold border border-gold/30 transition cursor-pointer"
+                              title="Réimprimer le reçu (Dernière tranche / action)"
+                            >
+                              <Printer className="h-3 w-3" />
+                              <span>Réimprimer</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

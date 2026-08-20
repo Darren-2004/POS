@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, User, Phone, Printer, Plus, Clock, Trash2, CheckCircle, RotateCcw, ArrowRight } from 'lucide-react';
+import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import { formatFCFA, triggerPrint, triggerProformaPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
@@ -11,20 +11,13 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  // Active Reservation / Form State
-  const [activeResId, setActiveResId] = useState(null); // null = New, string = Editing
-  const [activeResNo, setActiveResNo] = useState(null);
+  // Side Drawer state for selected reservation
+  const [selectedRes, setSelectedRes] = useState(null); // null = Drawer closed
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
-  const [resItems, setResItems] = useState([]); // Cart array
   const [newAdvanceAmount, setNewAdvanceAmount] = useState('');
-  const [advancePaymentMethod, setAdvancePaymentMethod] = useState('');
-  const [existingPayments, setExistingPayments] = useState([]);
+  const [advancePaymentMethod, setAdvancePaymentMethod] = useState('CASH');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Category search state
-  const [categorySearch, setCategorySearch] = useState('');
-  const [expandedCatIds, setExpandedCatIds] = useState([]);
 
   useEffect(() => {
     fetchReservations();
@@ -47,158 +40,79 @@ export default function ReservationsView({ categories = [], currentUser, serverO
     }
   };
 
-  const toggleExpandCategory = (catId) => {
-    setExpandedCatIds(prev =>
-      prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]
-    );
-  };
-
-  const handleAddItemToResCart = (designationName) => {
-    setResItems(prev => [
-      ...prev,
-      {
-        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-        categoryName: designationName,
-        price: '',
-        qty: 1
-      }
-    ]);
-  };
-
-  const handleUpdateItemField = (id, field, rawValue) => {
-    setResItems(prev => prev.map(item => {
-      if (item.id !== id) return item;
-      if (field === 'categoryName') return { ...item, categoryName: rawValue };
-      if (rawValue === '' || rawValue === undefined || rawValue === null) {
-        return { ...item, [field]: '' };
-      }
-      const cleanStr = String(rawValue).replace(/[^0-9.]/g, '');
-      if (cleanStr === '') return { ...item, [field]: '' };
-      const value = field === 'qty'
-        ? Math.max(0, parseInt(cleanStr, 10) || 0)
-        : Math.max(0, parseFloat(cleanStr) || 0);
-      return { ...item, [field]: value };
-    }));
-  };
-
-  const handleRemoveItem = (id) => setResItems(prev => prev.filter(item => item.id !== id));
-
-  const getResTotal = () => resItems.reduce((sum, i) => sum + ((parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0)), 0);
-  const getAlreadyPaid = () => existingPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-  const getRemainingBalance = () => Math.max(0, getResTotal() - getAlreadyPaid());
-
-  const [selectedResObject, setSelectedResObject] = useState(null);
-
-  // Click on a reservation in the list -> Populate form on the SAME screen!
-  const handleSelectReservation = (res) => {
-    setSelectedResObject(res);
-    setActiveResId(res.id);
-    setActiveResNo(res.reservationNo);
-    setClientName(res.clientName || '');
-    setClientPhone(res.clientPhone || '');
-    setExistingPayments(res.payments || []);
-
-    const loadedItems = (res.items || []).map(it => ({
-      id: it.id || (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)),
-      categoryName: it.categoryName,
-      price: it.price,
-      qty: it.qty || 1
-    }));
-    setResItems(loadedItems);
-
-    const paid = (res.payments || []).reduce((sum, p) => sum + p.amount, 0);
-    const remaining = Math.max(0, res.totalAmount - paid);
-    setNewAdvanceAmount(remaining > 0 ? remaining.toString() : '');
+  const handleOpenDrawer = (resObj) => {
+    setSelectedRes(resObj);
+    setClientName(resObj.clientName || '');
+    setClientPhone(resObj.clientPhone || '');
+    setNewAdvanceAmount('');
     setAdvancePaymentMethod('CASH');
   };
 
-  // Reset form to start a new reservation
-  const handleStartNewReservation = () => {
-    setSelectedResObject(null);
-    setActiveResId(null);
-    setActiveResNo(null);
+  const handleCloseDrawer = () => {
+    setSelectedRes(null);
     setClientName('');
     setClientPhone('');
-    setResItems([]);
-    setExistingPayments([]);
     setNewAdvanceAmount('');
-    setAdvancePaymentMethod('');
   };
 
-  // Save / Submit Reservation (Create or Update + optional new installment)
-  const handleSaveReservation = async () => {
+  const getAlreadyPaid = (resObj) => {
+    if (!resObj || !resObj.payments) return 0;
+    return resObj.payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  };
+
+  const getRemainingBalance = (resObj) => {
+    if (!resObj) return 0;
+    const total = parseFloat(resObj.totalAmount) || 0;
+    return Math.max(0, total - getAlreadyPaid(resObj));
+  };
+
+  // Save / Submit updated reservation details or new installment
+  const handleSaveDrawerChanges = async () => {
+    if (!selectedRes) return;
+
     if (!clientName.trim() && !clientPhone.trim()) {
-      return alert('Veuillez entrer au moins le nom du client OU son numéro de téléphone.');
-    }
-    if (resItems.length === 0) {
-      return alert('Le panier de réservation est vide. Veuillez ajouter au moins un article.');
-    }
-    const invalidLine = resItems.find(item => isNaN(item.price) || item.price <= 0 || isNaN(item.qty) || item.qty < 1);
-    if (invalidLine) {
-      return alert(`Vérifiez la ligne "${invalidLine.categoryName}" (prix et quantité doivent être valides)`);
+      return alert('Veuillez renseigner au moins le nom du client ou son numéro de téléphone.');
     }
 
-    const total = getResTotal();
-    const advanceNum = Number(newAdvanceAmount) || 0;
+    const advanceNum = parseFloat(newAdvanceAmount) || 0;
+    const remaining = getRemainingBalance(selectedRes);
 
-    if (advanceNum > 0 && advanceNum > getRemainingBalance() + 0.01) {
-      return alert(`L'avance saisie (${advanceNum} FCFA) dépasse le solde restant (${getRemainingBalance()} FCFA)`);
+    if (advanceNum > 0 && advanceNum > remaining + 0.01) {
+      return alert(`L'avance saisie (${formatFCFA(advanceNum)}) dépasse le solde restant (${formatFCFA(remaining)})`);
     }
 
     setIsSubmitting(true);
-
     try {
-      let response;
-      if (activeResId) {
-        // Update existing reservation
-        response = await fetch(`${API_BASE}/reservations/${activeResId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            clientName: clientName.trim(),
-            clientPhone: clientPhone.trim(),
-            totalAmount: total,
-            items: resItems.map(i => ({ categoryName: i.categoryName, price: Number(i.price) || 0, qty: Number(i.qty) || 1 })),
-            createdById: currentUser.id,
-            newPayment: advanceNum > 0 ? {
-              amount: advanceNum,
-              paymentMethod: advancePaymentMethod || 'CASH'
-            } : null
-          })
-        });
-      } else {
-        // Create new reservation
-        response = await fetch(`${API_BASE}/reservations`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            clientName: clientName.trim(),
-            clientPhone: clientPhone.trim(),
-            totalAmount: total,
-            items: resItems.map(i => ({ categoryName: i.categoryName, price: Number(i.price) || 0, qty: Number(i.qty) || 1 })),
-            createdById: currentUser.id,
-            initialPayment: advanceNum > 0 ? {
-              amount: advanceNum,
-              paymentMethod: advancePaymentMethod || 'CASH'
-            } : null
-          })
-        });
-      }
+      const response = await fetch(`${API_BASE}/reservations/${selectedRes.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName: clientName.trim(),
+          clientPhone: clientPhone.trim(),
+          totalAmount: selectedRes.totalAmount,
+          items: selectedRes.items || [],
+          createdById: currentUser.id,
+          newPayment: advanceNum > 0 ? {
+            amount: advanceNum,
+            paymentMethod: advancePaymentMethod || 'CASH'
+          } : null
+        })
+      });
 
-      const resData = await response.json();
+      const updatedResData = await response.json();
       if (!response.ok) {
-        alert(resData.error || 'Erreur lors de l\'enregistrement de la réservation');
+        alert(updatedResData.error || 'Erreur lors de la mise à jour');
         setIsSubmitting(false);
         return;
       }
 
       // Trigger Proforma Print automatically
-      triggerProformaPrint(resData);
+      triggerProformaPrint(updatedResData);
       window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
 
-      // Refresh list & load updated state
+      // Refresh list & update drawer content
       await fetchReservations();
-      handleSelectReservation(resData);
+      setSelectedRes(updatedResData);
       setNewAdvanceAmount('');
       setIsSubmitting(false);
     } catch (e) {
@@ -209,15 +123,14 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   };
 
   const handlePrintFinalInvoice = async () => {
-    if (!activeResId) return;
-    const total = getResTotal();
-    const paid = getAlreadyPaid();
-    if (paid < total - 0.01) {
-      return alert('La facture définitive ne peut être imprimée que lorsque la réservation est payée à 100%.');
+    if (!selectedRes) return;
+    const remaining = getRemainingBalance(selectedRes);
+    if (remaining > 0.01) {
+      return alert('La facture définitive ne peut être imprimée que lorsque la réservation est totalement réglée (Solde = 0 FCFA).');
     }
 
     try {
-      const response = await fetch(`${API_BASE}/reservations/${activeResId}/create-invoice`, {
+      const response = await fetch(`${API_BASE}/reservations/${selectedRes.id}/create-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ createdById: currentUser.id })
@@ -236,434 +149,391 @@ export default function ReservationsView({ categories = [], currentUser, serverO
     }
   };
 
-  const filteredCategories = categories.filter(c => {
-    const q = categorySearch.toLowerCase();
-    if (!q) return true;
-    const catMatch = c.name.toLowerCase().includes(q);
-    const subMatch = c.subCategories?.some(s => s.name.toLowerCase().includes(q));
-    return catMatch || subMatch;
-  });
-
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-white/[0.02]">
-      <div className="flex flex-1 gap-3 overflow-hidden min-h-0">
-        
-        {/* COLUMN 1: Category & Article Selector (Left) */}
-        <div className="flex w-64 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5 shrink-0">
-          <div className="relative mb-3">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
-            <input
-              type="text"
-              placeholder="Rechercher catégorie..."
-              value={categorySearch}
-              onChange={(e) => setCategorySearch(e.target.value)}
-              className={cx(inputCls, 'pl-9 bg-zinc-900 border-white/10 text-foreground text-xs')}
-            />
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-white/[0.01] p-2">
+      {/* Top Filter & Search Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-black/20 p-3 rounded-2xl border border-white/5 mb-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <Clock className="h-5 w-5 text-gold" />
+          <h2 className="text-sm font-bold text-foreground">Gestion des Réservations & Acomptes</h2>
+          <span className="rounded-full bg-gold/20 px-2.5 py-0.5 text-xs font-extrabold text-gold">
+            {reservations.length}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Status Pills */}
+          <div className="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-white/10 text-xs">
+            <button
+              onClick={() => setStatusFilter('')}
+              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', !statusFilter ? 'bg-gold text-black' : 'text-foreground/60 hover:text-white')}
+            >
+              Toutes
+            </button>
+            <button
+              onClick={() => setStatusFilter('PENDING')}
+              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'PENDING' ? 'bg-amber-500 text-black' : 'text-foreground/60 hover:text-white')}
+            >
+              En cours
+            </button>
+            <button
+              onClick={() => setStatusFilter('COMPLETED')}
+              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'COMPLETED' ? 'bg-emerald-500 text-black' : 'text-foreground/60 hover:text-white')}
+            >
+              Solde 100%
+            </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            <div className="space-y-1.5">
-              {filteredCategories.length === 0 ? (
-                <div className="text-xs text-foreground/40 italic p-3 text-center">Aucune catégorie trouvée.</div>
+          {/* Search Box */}
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
+            <input
+              type="text"
+              placeholder="Rechercher nom, n° ou tel..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs')}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT: Full-width Table of Existing Reservations */}
+      <div className="min-h-0 flex-1 overflow-hidden bg-black/20 rounded-2xl border border-white/5 flex flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-zinc-900 border-b border-white/10 text-[11px] uppercase tracking-wider text-foreground/50 font-semibold">
+              <tr>
+                <th className="px-4 py-3">N° Réservation</th>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Statut</th>
+                <th className="px-4 py-3 text-right">Total</th>
+                <th className="px-4 py-3 text-right">Déjà Payé</th>
+                <th className="px-4 py-3 text-right">Solde Restant</th>
+                <th className="px-4 py-3 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {loadingList ? (
+                <tr>
+                  <td colSpan="8" className="text-center py-12 text-foreground/40 italic">Chargement des réservations...</td>
+                </tr>
+              ) : reservations.length === 0 ? (
+                <tr>
+                  <td colSpan="8" className="text-center py-16 text-foreground/40 italic">
+                    Aucune réservation trouvée.
+                  </td>
+                </tr>
               ) : (
-                filteredCategories.map(cat => {
-                  const isExpanded = expandedCatIds.includes(cat.id) || Boolean(categorySearch);
-                  const hasSubs = cat.subCategories && cat.subCategories.length > 0;
+                reservations.map((res) => {
+                  const isCompleted = res.status === 'COMPLETED';
+                  const alreadyPaid = getAlreadyPaid(res);
+                  const remaining = getRemainingBalance(res);
+                  const paymentCount = res.payments?.length || 0;
 
                   return (
-                    <div key={cat.id} className="rounded-xl border border-white/5 bg-white/[0.015] overflow-hidden">
-                      <div className="flex items-center justify-between p-2 hover:bg-white/[0.04] transition">
-                        <button
-                          type="button"
-                          onClick={() => handleAddItemToResCart(cat.name)}
-                          disabled={!serverOnline}
-                          className="flex-1 text-left text-xs font-semibold text-foreground hover:text-gold transition truncate cursor-pointer"
-                          title={`Ajouter ${cat.name} à la réservation`}
-                        >
-                          {cat.name}
-                        </button>
-                        {hasSubs && (
+                    <tr
+                      key={res.id}
+                      onClick={() => handleOpenDrawer(res)}
+                      className="hover:bg-white/[0.03] transition cursor-pointer group"
+                    >
+                      <td className="px-4 py-3 font-mono font-bold text-gold">{res.reservationNo}</td>
+                      <td className="px-4 py-3 text-foreground/60 text-[11px]">
+                        {new Date(res.createdAt).toLocaleDateString('fr-FR')} {new Date(res.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-foreground">
+                        <div>{res.clientName || 'Client anonyme'}</div>
+                        {res.clientPhone && <div className="text-[10px] text-foreground/40 font-mono">{res.clientPhone}</div>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cx(
+                          'px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider',
+                          isCompleted ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                        )}>
+                          {isCompleted ? 'PAYÉE À 100%' : `${paymentCount}/3 Tranches`}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono font-bold text-right text-foreground">{formatFCFA(res.totalAmount)}</td>
+                      <td className="px-4 py-3 font-mono font-bold text-right text-emerald-400">{formatFCFA(alreadyPaid)}</td>
+                      <td className="px-4 py-3 font-mono font-bold text-right">
+                        <span className={remaining > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+                          {formatFCFA(remaining)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => toggleExpandCategory(cat.id)}
-                            className="text-[10px] text-gold/90 bg-gold/10 hover:bg-gold/20 px-2 py-0.5 rounded-md font-bold transition ml-1 cursor-pointer"
+                            onClick={() => handleOpenDrawer(res)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-foreground/80 text-xs font-semibold transition cursor-pointer border border-white/10"
                           >
-                            {isExpanded ? '▲' : `▼ ${cat.subCategories.length}`}
+                            <Eye className="h-3.5 w-3.5" />
+                            <span>Détails & Acompte</span>
                           </button>
-                        )}
-                      </div>
-
-                      {hasSubs && isExpanded && (
-                        <div className="bg-black/30 p-1.5 space-y-1 border-t border-white/5">
-                          {cat.subCategories.map(sub => (
-                            <button
-                              key={sub.id}
-                              type="button"
-                              onClick={() => handleAddItemToResCart(`${cat.name} - ${sub.name}`)}
-                              disabled={!serverOnline}
-                              className="w-full text-left text-[11px] font-medium text-foreground/80 hover:text-gold hover:bg-white/5 px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <span className="text-gold font-bold">↳</span>
-                              <span>{sub.name}</span>
-                            </button>
-                          ))}
+                          <button
+                            type="button"
+                            onClick={() => triggerProformaPrint(res)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gold/15 hover:bg-gold/30 text-gold text-xs font-bold transition cursor-pointer border border-gold/30 shadow-sm"
+                            title="Réimprimer le reçu (Dernière tranche / action)"
+                          >
+                            <Printer className="h-3.5 w-3.5" />
+                            <span>Réimprimer</span>
+                          </button>
                         </div>
-                      )}
-                    </div>
+                      </td>
+                    </tr>
                   );
                 })
               )}
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        {/* COLUMN 2: Main Reservation Form & Cart (Center) */}
-        <div className="flex flex-1 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5 min-w-0">
-          
-          {/* Header indicator bar */}
-          <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className={cx(
-                'px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5',
-                activeResId ? 'bg-gold/15 text-gold border border-gold/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-              )}>
-                <Clock className="h-3.5 w-3.5" />
-                {activeResId ? `Édition Réservation : ${activeResNo}` : 'Nouvelle Réservation'}
-              </span>
-              {activeResId && existingPayments.length > 0 && (
-                <span className="text-xs text-foreground/50 font-semibold">
-                  ({existingPayments.length}/3 tranches effectuées)
-                </span>
-              )}
-            </div>
-
-            {activeResId && (
-              <button
-                type="button"
-                onClick={handleStartNewReservation}
-                className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/10 px-3 py-1.5 text-xs font-semibold text-foreground/80 transition cursor-pointer"
-              >
-                <RotateCcw className="h-3.5 w-3.5 text-gold" />
-                <span>Nouvelle Réservation</span>
-              </button>
-            )}
-          </div>
-
-          {/* Audit trail indicator */}
-          {activeResId && selectedResObject && (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gold/20 bg-gold/5 p-2.5 text-[11px] text-foreground/80">
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-foreground/50">Créée par :</span>
-                <strong className="text-gold font-bold">{selectedResObject.createdBy?.name || 'N/A'}</strong>
-                <span className="text-foreground/40 text-[10px]">
-                  ({selectedResObject.createdAt ? new Date(selectedResObject.createdAt).toLocaleString('fr-FR') : ''})
-                </span>
-              </div>
-              {selectedResObject.updatedBy?.name && (
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-foreground/50">Dernière modif :</span>
-                  <strong className="text-gold font-bold">{selectedResObject.updatedBy.name}</strong>
-                  <span className="text-foreground/40 text-[10px]">
-                    ({new Date(selectedResObject.updatedAt).toLocaleString('fr-FR')})
-                  </span>
+      {/* SIDE WINDOW DRAWER (Opens when a reservation is selected) */}
+      {selectedRes && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-all duration-300 cursor-pointer"
+          onClick={handleCloseDrawer}
+        >
+          <div
+            className="w-full max-w-xl bg-zinc-900 border-l border-white/10 h-full flex flex-col shadow-2xl p-5 overflow-hidden animate-in slide-in-from-right duration-200 cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            
+            {/* Drawer Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-gold" />
+                <div>
+                  <h3 className="text-sm font-black text-gold font-mono">{selectedRes.reservationNo}</h3>
+                  <div className="text-xs text-foreground/50">Détails et Gestion des versements</div>
                 </div>
-              )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className={cx(
+                  'px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider',
+                  selectedRes.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                )}>
+                  {selectedRes.status === 'COMPLETED' ? 'SOLDE 100%' : 'EN COURS'}
+                </span>
+                <button
+                  onClick={handleCloseDrawer}
+                  className="rounded-xl p-1 text-foreground/50 hover:bg-white/10 hover:text-white transition cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
-          )}
 
-          {/* Client Info Inputs (At least one required) */}
-          <div className="grid sm:grid-cols-2 gap-3 mb-3 shrink-0 bg-white/[0.02] p-3 rounded-xl border border-white/5">
-            <Field label="Nom du Client (Obligatoire si pas de téléphone)">
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
-                <input
-                  type="text"
-                  placeholder="Nom du client"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
-                />
+            {/* Drawer Scrollable Content */}
+            <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+              
+              {/* Audit Info */}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/[0.02] p-2.5 text-[11px] border border-white/5">
+                <div>
+                  <span className="text-foreground/50">Créée par : </span>
+                  <strong className="text-gold font-bold">{selectedRes.createdBy?.name || 'Caissière'}</strong>
+                </div>
+                <div>
+                  <span className="text-foreground/50">Date : </span>
+                  <span className="text-foreground/80">{new Date(selectedRes.createdAt).toLocaleString('fr-FR')}</span>
+                </div>
               </div>
-            </Field>
 
-            <Field label="Numéro de Téléphone (Obligatoire si pas de nom)">
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
-                <input
-                  type="text"
-                  placeholder="Ex: 0700000000"
-                  value={clientPhone}
-                  onChange={(e) => setClientPhone(e.target.value)}
-                  className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
-                />
+              {/* Client Info (Editable) */}
+              <div className="space-y-2 bg-white/[0.02] p-3 rounded-2xl border border-white/5">
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground/50">Informations Client</div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Field label="Nom du Client">
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
+                      <input
+                        type="text"
+                        placeholder="Nom du client"
+                        value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
+                      />
+                    </div>
+                  </Field>
+
+                  <Field label="Numéro de Téléphone">
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
+                      <input
+                        type="text"
+                        placeholder="Ex: 0700000000"
+                        value={clientPhone}
+                        onChange={(e) => setClientPhone(e.target.value)}
+                        className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
+                      />
+                    </div>
+                  </Field>
+                </div>
               </div>
-            </Field>
-          </div>
 
-          {/* Table of Reserved Items */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden mb-3">
-            <div className="min-h-0 flex-1 overflow-y-auto px-1">
-              <table className="min-w-full border-collapse text-left text-[12px]">
-                <thead className="sticky top-0 z-10 bg-zinc-900 border-b border-white/10">
-                  <tr>
-                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Désignation</th>
-                    <th className="w-20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Qté</th>
-                    <th className="w-28 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Prix / un.</th>
-                    <th className="w-28 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Total</th>
-                    <th className="w-16 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resItems.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" className="text-center py-10 text-xs text-foreground/40 italic">
-                        Aucun article dans la réservation. Cliquez sur une catégorie à gauche pour ajouter un article.
-                      </td>
-                    </tr>
-                  ) : (
-                    resItems.map(item => (
-                      <tr key={item.id} className="border-b border-white/5 odd:bg-white/[0.01] even:bg-white/[0.02]">
-                        <td className="px-2 py-1.5">
-                          <input
-                            type="text"
-                            value={item.categoryName}
-                            onChange={(e) => handleUpdateItemField(item.id, 'categoryName', e.target.value)}
-                            className="w-full bg-transparent px-2 py-1 text-xs text-foreground outline-none border border-transparent focus:border-gold/30 rounded"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.qty}
-                            onChange={(e) => handleUpdateItemField(item.id, 'qty', e.target.value)}
-                            className="w-full rounded-lg border border-white/10 bg-zinc-900 px-2 py-1 text-xs text-foreground outline-none focus:border-gold text-center"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={item.price}
-                            onChange={(e) => handleUpdateItemField(item.id, 'price', e.target.value)}
-                            className="w-full rounded-lg border border-white/10 bg-zinc-900 px-2 py-1 text-xs text-foreground outline-none focus:border-gold font-mono"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5 font-mono text-xs font-semibold text-gold">
-                          {formatFCFA((Number(item.price) || 0) * (Number(item.qty) || 0))}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem(item.id)}
-                            className="text-xs font-semibold text-foreground/50 hover:text-red-400 p-1"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
+              {/* Items List */}
+              <div className="space-y-2 bg-white/[0.02] p-3 rounded-2xl border border-white/5">
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground/50">Articles de la commande</div>
+                <div className="rounded-xl border border-white/5 overflow-hidden">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead className="bg-zinc-900 text-[10px] uppercase text-foreground/50 font-semibold border-b border-white/5">
+                      <tr>
+                        <th className="p-2">Désignation</th>
+                        <th className="p-2 text-center">Qté</th>
+                        <th className="p-2 text-right">P/U</th>
+                        <th className="p-2 text-right">Total</th>
                       </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {(selectedRes.items || []).map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="p-2 text-foreground font-medium">{item.categoryName}</td>
+                          <td className="p-2 text-center text-foreground/80">{item.qty || 1}</td>
+                          <td className="p-2 text-right font-mono text-foreground/80">{formatFCFA(item.price)}</td>
+                          <td className="p-2 text-right font-mono font-bold text-gold">{formatFCFA((item.price || 0) * (item.qty || 1))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Financial Breakdown */}
+              <div className="grid grid-cols-3 gap-2 bg-black/40 p-3 rounded-2xl border border-white/10 text-center">
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-foreground/40">Total Commande</div>
+                  <div className="text-sm font-black text-gold mt-0.5">{formatFCFA(selectedRes.totalAmount)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-foreground/40">Déjà Payé</div>
+                  <div className="text-sm font-bold text-emerald-400 mt-0.5">{formatFCFA(getAlreadyPaid(selectedRes))}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-foreground/40">Solde Restant</div>
+                  <div className={cx('text-sm font-black mt-0.5', getRemainingBalance(selectedRes) > 0 ? 'text-amber-400' : 'text-emerald-400')}>
+                    {formatFCFA(getRemainingBalance(selectedRes))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment History */}
+              <div className="space-y-2 bg-white/[0.02] p-3 rounded-2xl border border-white/5">
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground/50">
+                  Historique des Versements ({selectedRes.payments?.length || 0}/3)
+                </div>
+                <div className="space-y-1.5">
+                  {(!selectedRes.payments || selectedRes.payments.length === 0) ? (
+                    <div className="text-xs italic text-foreground/40 p-2">Aucun versement effectué pour l'instant.</div>
+                  ) : (
+                    selectedRes.payments.map((p, idx) => (
+                      <div key={p.id || idx} className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-white/5 text-xs">
+                        <div>
+                          <div className="font-bold text-foreground">Tranche #{p.installmentNumber || idx + 1} ({getPaymentMethodLabel(p.paymentMethod)})</div>
+                          <div className="text-[10px] text-foreground/40">
+                            {p.createdAt ? new Date(p.createdAt).toLocaleString('fr-FR') : ''}
+                          </div>
+                        </div>
+                        <div className="font-mono font-bold text-emerald-400 text-sm">
+                          +{formatFCFA(p.amount)}
+                        </div>
+                      </div>
                     ))
                   )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Financial summary & New Advance Section */}
-          <div className="border-t border-white/10 pt-3 space-y-3 shrink-0">
-            
-            {/* Amounts Row */}
-            <div className="grid grid-cols-3 gap-2 bg-white/[0.02] p-2.5 rounded-xl border border-white/5 text-center">
-              <div>
-                <div className="text-[10px] uppercase font-bold text-foreground/40">Total Réservation</div>
-                <div className="text-sm font-black text-gold mt-0.5">{formatFCFA(getResTotal())}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase font-bold text-foreground/40">Déjà Payé</div>
-                <div className="text-sm font-bold text-emerald-400 mt-0.5">{formatFCFA(getAlreadyPaid())}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase font-bold text-foreground/40">Solde Restant</div>
-                <div className={cx('text-sm font-black mt-0.5', getRemainingBalance() > 0 ? 'text-amber-400' : 'text-emerald-400')}>
-                  {formatFCFA(getRemainingBalance())}
                 </div>
               </div>
-            </div>
 
-            {/* Advance payment input section */}
-            <div className="grid sm:grid-cols-2 gap-3 bg-zinc-900/60 p-3 rounded-xl border border-gold/30">
-              <Field label={`Avance / Nouvel Acompte (Tranche #${existingPayments.length + 1})`}>
-                <input
-                  type="number"
-                  min="0"
-                  max={getRemainingBalance()}
-                  placeholder="Ex: 5000"
-                  value={newAdvanceAmount}
-                  onChange={(e) => setNewAdvanceAmount(e.target.value)}
-                  className={cx(inputCls, 'bg-zinc-900 border-gold/50 text-foreground font-mono font-bold text-sm')}
-                />
-              </Field>
+              {/* Add New Advance Input Section (If remaining balance > 0) */}
+              {getRemainingBalance(selectedRes) > 0 && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    Saisir un Nouvel Acompte (Tranche #{ (selectedRes.payments?.length || 0) + 1 })
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <Field label="Montant de l'acompte (FCFA)">
+                      <input
+                        type="number"
+                        min="1"
+                        max={getRemainingBalance(selectedRes)}
+                        placeholder="Ex: 5000"
+                        value={newAdvanceAmount}
+                        onChange={(e) => setNewAdvanceAmount(e.target.value)}
+                        className={cx(inputCls, 'bg-zinc-900 border-amber-500/50 text-gold font-mono font-bold text-sm')}
+                      />
+                    </Field>
 
-              <div className="grid gap-1">
-                <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground/50">Mode de paiement acompte</div>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setAdvancePaymentMethod(prev => prev === 'CASH' ? '' : 'CASH')}
-                    className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'CASH' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
-                  >
-                    Espèces
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdvancePaymentMethod(prev => prev === 'ONLINE' ? '' : 'ONLINE')}
-                    className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ONLINE' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
-                  >
-                    Mobile
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdvancePaymentMethod(prev => prev === 'ORANGE_MONEY' ? '' : 'ORANGE_MONEY')}
-                    className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ORANGE_MONEY' ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
-                  >
-                    Orange
-                  </button>
+                    <div className="grid gap-1">
+                      <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground/50">Mode de paiement</div>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setAdvancePaymentMethod('CASH')}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'CASH' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                        >
+                          Espèces
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdvancePaymentMethod('ONLINE')}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ONLINE' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                        >
+                          Mobile
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdvancePaymentMethod('ORANGE_MONEY')}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ORANGE_MONEY' ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                        >
+                          Orange
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
             </div>
 
-            {/* Action buttons */}
-            <div className="flex items-center justify-between gap-2 pt-1">
+            {/* Drawer Bottom Actions */}
+            <div className="border-t border-white/10 pt-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
               <button
                 type="button"
-                onClick={handleSaveReservation}
-                disabled={isSubmitting || resItems.length === 0 || !serverOnline}
+                onClick={() => triggerProformaPrint(selectedRes)}
+                className="rounded-2xl bg-white/5 hover:bg-white/10 text-gold border border-gold/30 py-3 px-4 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="Réimprimer le dernier reçu de cette réservation"
+              >
+                <Printer className="h-4 w-4 text-gold" />
+                <span>Réimprimer Reçu</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveDrawerChanges}
+                disabled={isSubmitting || !serverOnline}
                 className="flex-1 rounded-2xl bg-gold py-3 px-4 text-xs font-extrabold text-black hover:bg-gold/85 disabled:opacity-40 transition shadow-lg shadow-gold/10 flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Printer className="h-4 w-4" />
-                <span>{isSubmitting ? 'Enregistrement...' : activeResId ? 'Mettre à jour & Proforma' : 'Créer & Imprimer Proforma'}</span>
+                <span>{isSubmitting ? 'Enregistrement...' : 'Enregistrer Nouveau Versement'}</span>
               </button>
 
-              {activeResId && getRemainingBalance() <= 0 && (
+              {getRemainingBalance(selectedRes) <= 0.01 && (
                 <button
                   type="button"
                   onClick={handlePrintFinalInvoice}
-                  className="rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 py-3 px-5 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  className="rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 py-3 px-4 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
                 >
                   <CheckCircle className="h-4 w-4 text-emerald-400" />
-                  <span>Facture Définitive</span>
+                  <span>Imprimer Facture Définitive</span>
                 </button>
               )}
             </div>
+
           </div>
         </div>
-
-        {/* COLUMN 3: Reservation History List (Right side of same screen) */}
-        <div className="flex w-80 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5 shrink-0">
-          
-          <div className="space-y-2 mb-3 shrink-0">
-            <div className="text-xs font-bold uppercase tracking-wider text-foreground/60 flex items-center justify-between">
-              <span>Réservations</span>
-              <span className="text-[10px] text-gold font-mono">{reservations.length}</span>
-            </div>
-
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
-              <input
-                type="text"
-                placeholder="Rechercher nom, n° ou tel..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs')}
-              />
-            </div>
-
-            <div className="flex gap-1">
-              <button
-                onClick={() => setStatusFilter('')}
-                className={cx('flex-1 rounded-lg py-1 text-[10px] font-bold transition', !statusFilter ? 'bg-white/15 text-gold' : 'text-foreground/50 hover:bg-white/5')}
-              >
-                Toutes
-              </button>
-              <button
-                onClick={() => setStatusFilter('PENDING')}
-                className={cx('flex-1 rounded-lg py-1 text-[10px] font-bold transition', statusFilter === 'PENDING' ? 'bg-amber-500/20 text-amber-400' : 'text-foreground/50 hover:bg-white/5')}
-              >
-                En cours
-              </button>
-              <button
-                onClick={() => setStatusFilter('COMPLETED')}
-                className={cx('flex-1 rounded-lg py-1 text-[10px] font-bold transition', statusFilter === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' : 'text-foreground/50 hover:bg-white/5')}
-              >
-                100%
-              </button>
-            </div>
-          </div>
-
-          {/* Cards List */}
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-2">
-            {loadingList ? (
-              <div className="text-xs text-foreground/40 italic py-6 text-center">Chargement...</div>
-            ) : reservations.length === 0 ? (
-              <div className="text-xs text-foreground/40 italic py-8 text-center bg-white/[0.01] rounded-xl border border-white/5 p-3">
-                Aucune réservation trouvée.
-              </div>
-            ) : (
-              reservations.map((res) => {
-                const isSelected = activeResId === res.id;
-                const isCompleted = res.status === 'COMPLETED';
-                const paymentCount = res.payments?.length || 0;
-
-                return (
-                  <div
-                    key={res.id}
-                    onClick={() => handleSelectReservation(res)}
-                    className={cx(
-                      'rounded-xl border p-3 transition cursor-pointer space-y-2',
-                      isSelected
-                        ? 'border-gold bg-gold/10 shadow-lg shadow-gold/10'
-                        : 'border-white/5 bg-white/[0.015] hover:border-white/20 hover:bg-white/[0.03]'
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <div>
-                        <div className="text-[11px] font-mono font-bold text-gold">{res.reservationNo}</div>
-                        <div className="text-xs font-bold text-foreground truncate max-w-[150px]">
-                          {res.clientName || 'Client anonyme'}
-                        </div>
-                        {res.clientPhone && (
-                          <div className="text-[10px] text-foreground/50 font-mono">
-                            {res.clientPhone}
-                          </div>
-                        )}
-                      </div>
-
-                      <span className={cx(
-                        'px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wider shrink-0',
-                        isCompleted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
-                      )}>
-                        {isCompleted ? '100%' : `${paymentCount}/3 Tr.`}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center text-[11px] border-t border-white/5 pt-1.5">
-                      <span className="text-foreground/50">Total: <strong className="text-foreground">{formatFCFA(res.totalAmount)}</strong></span>
-                      <span className="text-foreground/50">Reste: <strong className={res.remainingBalance > 0 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{formatFCFA(res.remainingBalance)}</strong></span>
-                    </div>
-
-                    <div className="flex justify-end pt-0.5">
-                      <span className="text-[10px] text-gold font-semibold flex items-center gap-0.5 group-hover:underline">
-                        Charger dans le panier <ArrowRight className="h-3 w-3" />
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-      </div>
+      )}
     </div>
   );
 }

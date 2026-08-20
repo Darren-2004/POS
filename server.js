@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
+import { exec } from 'child_process';
 import { prisma } from './db.js';
 import { hashPin, verifyPin } from './authHelper.js';
 
@@ -36,6 +37,72 @@ const localDayRange = (dateStr) => {
   const end   = new Date(year, month - 1, day, 23, 59, 59, 999);
   return { start, end };
 };
+
+// Helper: generate guaranteed unique invoice number FAC-YYYYMMDD-XXXX
+async function generateUniqueInvoiceNumber(tx) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const prefix = `FAC-${year}${month}${day}-`;
+
+  const todayInvoices = await tx.invoice.findMany({
+    where: { invoiceNumber: { startsWith: prefix } },
+    select: { invoiceNumber: true }
+  });
+
+  let maxSeq = 0;
+  todayInvoices.forEach(inv => {
+    const parts = inv.invoiceNumber.split('-');
+    const seqNum = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(seqNum) && seqNum > maxSeq) {
+      maxSeq = seqNum;
+    }
+  });
+
+  let nextSeq = maxSeq + 1;
+  let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+
+  while (await tx.invoice.findUnique({ where: { invoiceNumber: candidate } })) {
+    nextSeq++;
+    candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  return candidate;
+}
+
+// Helper: generate guaranteed unique reservation number RES-YYYYMMDD-XXXX
+async function generateUniqueReservationNo(tx) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const prefix = `RES-${year}${month}${day}-`;
+
+  const todayRes = await tx.reservation.findMany({
+    where: { reservationNo: { startsWith: prefix } },
+    select: { reservationNo: true }
+  });
+
+  let maxSeq = 0;
+  todayRes.forEach(r => {
+    const parts = r.reservationNo.split('-');
+    const seqNum = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(seqNum) && seqNum > maxSeq) {
+      maxSeq = seqNum;
+    }
+  });
+
+  let nextSeq = maxSeq + 1;
+  let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+
+  while (await tx.reservation.findUnique({ where: { reservationNo: candidate } })) {
+    nextSeq++;
+    candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  return candidate;
+}
 
 // -------------------------------------------------------------
 // USERS & AUTHENTICATION
@@ -411,27 +478,7 @@ app.post('/api/invoices', async (req, res) => {
   try {
     // Utiliser une transaction Prisma pour garantir la concurrence et le format séquentiel sans doublons
     const newInvoice = await prisma.$transaction(async (tx) => {
-      // Déterminer la date d'aujourd'hui en heure locale
-      const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-      // Compter le nombre de factures générées aujourd'hui pour calculer le numéro de facture séquentiel
-      const countToday = await tx.invoice.count({
-        where: {
-          createdAt: {
-            gte: startOfDay,
-            lte: endOfDay
-          }
-        }
-      });
-
-      // Formatage du numéro : FAC-YYYYMMDD-XXXX
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const seq = String(countToday + 1).padStart(4, '0');
-      const invoiceNumber = `FAC-${year}${month}${day}-${seq}`;
+      const invoiceNumber = await generateUniqueInvoiceNumber(tx);
 
       // Création de la facture et de ses éléments
       return await tx.invoice.create({
@@ -656,19 +703,7 @@ app.post('/api/reservations/:id/create-invoice', async (req, res) => {
     const lastPaymentMethod = reservation.payments?.[reservation.payments.length - 1]?.paymentMethod || 'CASH';
 
     const newInvoice = await prisma.$transaction(async (tx) => {
-      const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-      const countToday = await tx.invoice.count({
-        where: { createdAt: { gte: startOfDay, lte: endOfDay } }
-      });
-
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const seq = String(countToday + 1).padStart(4, '0');
-      const invoiceNumber = `FAC-${year}${month}${day}-${seq}`;
+      const invoiceNumber = await generateUniqueInvoiceNumber(tx);
 
       return await tx.invoice.create({
         data: {
@@ -710,19 +745,7 @@ app.post('/api/reservations', async (req, res) => {
 
   try {
     const reservation = await prisma.$transaction(async (tx) => {
-      const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-      const countToday = await tx.reservation.count({
-        where: { createdAt: { gte: startOfDay, lte: endOfDay } }
-      });
-
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const seq = String(countToday + 1).padStart(4, '0');
-      const reservationNo = `RES-${year}${month}${day}-${seq}`;
+      const reservationNo = await generateUniqueReservationNo(tx);
 
       const newRes = await tx.reservation.create({
         data: {
@@ -1352,20 +1375,147 @@ app.get('/api/stats', async (req, res) => {
 // SERVIR L'APPLICATION FRONTEND STATIQUE
 // -------------------------------------------------------------
 // Endpoint de réception des jobs d'impression (demo)
+let lastServerPrintTimestamp = 0;
+
 app.post('/api/print', async (req, res) => {
   try {
+    const now = Date.now();
+    if (now - lastServerPrintTimestamp < 2500) {
+      console.log('Ignored duplicate print request (throttled)');
+      return res.json({ ok: true, message: 'Print request throttled' });
+    }
+    lastServerPrintTimestamp = now;
+
     const { html } = req.body || {};
     if (!html) return res.status(400).json({ error: 'No html provided' });
 
     const outDir = path.join(__dirname, 'print_jobs');
     await fs.mkdir(outDir, { recursive: true });
-    const filename = `print_${Date.now()}.html`;
-    const outPath = path.join(outDir, filename);
-    await fs.writeFile(outPath, html, 'utf8');
+    const timestamp = Date.now();
+    const htmlPath = path.join(outDir, `print_${timestamp}.html`);
+    const pdfPath  = path.join(outDir, `print_${timestamp}.pdf`);
+    await fs.writeFile(htmlPath, html, 'utf8');
 
-    console.log('Saved print job to', outPath);
-    // Ici on pourrait appeler un utilitaire natif pour envoyer vers l'imprimante POS
-    res.json({ ok: true, path: `/print_jobs/${filename}` });
+    console.log('Saved print job to', htmlPath);
+
+    if (process.platform === 'linux') {
+      // Detect available Chrome/Chromium binary
+      const chromeBins = ['google-chrome', 'chromium', 'chromium-browser'];
+      let chromeBin = process.env.CHROME_BIN || null;
+      if (!chromeBin) {
+        const { execSync } = await import('child_process');
+        for (const bin of chromeBins) {
+          try {
+            const found = execSync(`which ${bin} 2>/dev/null`).toString().trim();
+            if (found) { chromeBin = found; break; }
+          } catch { /* not found */ }
+        }
+      }
+
+      const printerName = process.env.PRINTER_NAME || '';
+      const printerArg  = printerName ? `-d "${printerName}"` : '';
+
+      if (chromeBin) {
+        // Step 1: Chrome headless generates PDF (Letter/A4 size — Chrome ignores --paper-width)
+        const chromeCmd = [
+          `"${chromeBin}"`,
+          '--headless=new',
+          '--no-sandbox',
+          '--disable-gpu',
+          '--run-all-compositor-stages-before-draw',
+          '--virtual-time-budget=5000',
+          `--print-to-pdf="${pdfPath}"`,
+          '--print-to-pdf-no-header',
+          '--no-pdf-header-footer',
+          `"file://${htmlPath}"`,
+          '2>/dev/null'
+        ].join(' ');
+
+        exec(chromeCmd, (chromeErr) => {
+          if (chromeErr) {
+            console.warn('Chrome PDF generation failed:', chromeErr.message);
+            return;
+          }
+          console.log('PDF generated (A4):', pdfPath);
+
+          // If PRINTER_NAME is specified in .env, assume thermal printer and use 80mm Ghostscript scaling
+          // Otherwise, send original PDF with fit-to-page so text is large and clear on A4 office printers
+          if (printerName) {
+            const thermalPdfPath = pdfPath.replace('.pdf', '_thermal.pdf');
+            const gsCmd = [
+              'gs',
+              '-q',
+              '-dNOPAUSE',
+              '-dBATCH',
+              '-dSAFER',
+              '-sDEVICE=pdfwrite',
+              '-dFIXEDMEDIA',
+              '-dPDFFitPage',
+              '-g22677x56693',   // 80mm x 200mm in 100ths of points
+              `-sOutputFile="${thermalPdfPath}"`,
+              `"${pdfPath}"`,
+              '2>/dev/null'
+            ].join(' ');
+
+            exec(gsCmd, (gsErr) => {
+              const finalPdf = gsErr ? pdfPath : thermalPdfPath;
+              const lpCmd = `lp -d "${printerName}" -o sides=one-sided "${finalPdf}" 2>/dev/null`;
+              exec(lpCmd, (lpErr) => {
+                if (lpErr) console.warn('lp print failed:', lpErr.message);
+                else console.log('✅ Print job sent to thermal printer:', printerName);
+              });
+            });
+          } else {
+            // Default printer (A4 / office printer): print full PDF scaled to page for maximum readability
+            const lpCmd = `lp -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+            exec(lpCmd, (lpErr) => {
+              if (lpErr) console.warn('lp print failed:', lpErr.message);
+              else console.log('✅ Print job sent to default printer (scaled to page)');
+            });
+          }
+        });
+
+      } else {
+        // Chrome not found — warn
+        console.warn('No Chrome/Chromium found. Install with: sudo apt-get install -y google-chrome-stable');
+      }
+
+    } else if (process.platform === 'win32') {
+      const chromePaths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      ];
+      let chromeBin = process.env.CHROME_BIN || null;
+      if (!chromeBin) {
+        chromeBin = chromePaths.find(p => {
+          try { require('fs').accessSync(p); return true; } catch { return false; }
+        });
+      }
+      if (chromeBin) {
+        const printerName = process.env.PRINTER_NAME || '';
+        const chromeCmd = [
+          `"${chromeBin}"`,
+          '--headless=new', '--no-sandbox', '--disable-gpu',
+          '--virtual-time-budget=5000',
+          `--print-to-pdf="${pdfPath}"`,
+          '--no-pdf-header-footer',
+          '--paper-width=3.14961',
+          '--paper-height=20',
+          '--margin-top=0 --margin-bottom=0 --margin-left=0 --margin-right=0',
+          `"file:///${htmlPath.replace(/\\/g, '/')}"`
+        ].join(' ');
+        exec(chromeCmd, (err) => {
+          if (!err) {
+            const lpCmd = printerName
+              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`
+              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`;
+            exec(lpCmd, (lpErr) => { if (lpErr) console.warn('Win32 print warn:', lpErr.message); });
+          }
+        });
+      }
+    }
+
+    res.json({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
   } catch (err) {
     console.error('Print endpoint error', err);
     res.status(500).json({ error: 'Failed to enqueue print job' });

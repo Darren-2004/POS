@@ -18,7 +18,24 @@ export const getPaymentMethodLabel = (method) => {
   return 'Non précisé';
 };
 
+export const showToast = (message, type = 'success') => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('pos:toast', { detail: { message, type } }));
+  }
+};
+
+let lastPrintTimestamp = 0;
+let isPrintingBusy = false;
+
 export const triggerPrint = (invoiceData) => {
+  const now = Date.now();
+  if (isPrintingBusy || now - lastPrintTimestamp < 3000) {
+    showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
+    return;
+  }
+  isPrintingBusy = true;
+  lastPrintTimestamp = now;
+
   const isZ = invoiceData.isZReport;
   const zr = invoiceData.zReport;
 
@@ -64,47 +81,48 @@ export const triggerPrint = (invoiceData) => {
     : '';
 
   const printHTML = isZ ? `
-    <div style="text-align:center;margin-bottom:8px;font-family:monospace;">
-      <h2 style="margin:0;font-size:13px;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
-      <p style="margin:2px 0 0 0;font-size:11px;">RAPPORT DE CLÔTURE (Z)</p>
-      <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
+    <div style="text-align:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:20pt;letter-spacing:3px;">JOEL SHOP</h2>
+      <h3 style="margin:4px 0;font-size:14pt;">RAPPORT DE CLÔTURE (Z)</h3>
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
     </div>
-    <div style="font-size:10px;font-family:monospace;">
-      <div style="display:flex;justify-content:space-between;"><span>Date:</span><span>${zr.date} ${zr.time}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Operateur:</span><span>${invoiceData.createdBy?.name || 'Admin'}</span></div>
-      <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
-      <div style="font-weight:bold;margin-bottom:4px;">SYNTHÈSE COMPTABLE</div>
-      <div style="display:flex;justify-content:space-between;font-weight:bold;"><span>TOTAL NET:</span><span>${Math.round(zr.totalSales).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Espèces:</span><span>${Math.round(zr.totalCash || zr.payments?.CASH || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Mobile Money:</span><span>${Math.round(zr.totalOnline || zr.payments?.ONLINE || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Orange Money:</span><span>${Math.round(zr.payments?.ORANGE_MONEY || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Ventes Validées:</span><span>${zr.validatedCount}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Ventes Annulées:</span><span>${zr.cancelledCount}</span></div>
-      <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
-      <div style="font-weight:bold;margin-bottom:4px;">RÉPARTITION PAR CATÉGORIE</div>
+    <div style="font-size:12pt;">
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Date :</span><span>${zr.date} ${zr.time}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Opérateur :</span><span>${invoiceData.createdBy?.name || 'Admin'}</span></div>
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+      <div style="font-weight:bold;font-size:14pt;margin-bottom:6px;">SYNTHÈSE COMPTABLE</div>
+      <div style="display:flex;justify-content:space-between;font-size:16pt;font-weight:bold;margin:6px 0;"><span>TOTAL NET :</span><span>${Math.round(zr.totalSales).toLocaleString('fr-FR')} FCFA</span></div>
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Espèces :</span><span>${Math.round(zr.totalCash || zr.payments?.CASH || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Mobile Money :</span><span>${Math.round(zr.totalOnline || zr.payments?.ONLINE || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Orange Money :</span><span>${Math.round(zr.payments?.ORANGE_MONEY || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Ventes Validées :</span><span>${zr.validatedCount}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Ventes Annulées :</span><span>${zr.cancelledCount}</span></div>
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+      <div style="font-weight:bold;font-size:14pt;margin-bottom:6px;">RÉPARTITION PAR CATÉGORIE</div>
       ${topSellingRows}
-      <p style="text-align:center;margin-top:12px;font-size:10px;">--- FIN DU RAPPORT Z ---</p>
+      <p style="text-align:center;margin-top:20px;font-size:12pt;font-weight:bold;">--- FIN DU RAPPORT Z ---</p>
     </div>
   ` : `
-    <div style="text-align:center;margin-bottom:6px;font-family:monospace;">
-      <h2 style="margin:0;font-size:15px;font-weight:bold;letter-spacing:3px;">JOEL SHOP</h2>
-      <p style="margin:2px 0 0 0;font-size:10px;letter-spacing:1px;">--- TICKET DE CAISSE ---</p>
+    <div style="text-align:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:22pt;font-weight:bold;letter-spacing:4px;">JOEL SHOP</h2>
+      <p style="margin:4px 0;font-size:13pt;letter-spacing:2px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
     </div>
-    <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
-    <div style="font-size:10px;font-family:monospace;">
-      <div style="display:flex;justify-content:space-between;"><span>N° Ticket :</span><b>${invoiceData.invoiceNumber}</b></div>
-      <div style="display:flex;justify-content:space-between;"><span>Date       :</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Caissière  :</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Client     :</span><span>${invoiceData.clientName || 'Client de passage'}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Règlement  :</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
+    <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+    <div style="font-size:13pt;">
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>N° Ticket :</span><b>${invoiceData.invoiceNumber}</b></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Date     :</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Caissière:</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Client   :</span><span>${invoiceData.clientName || 'Client de passage'}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
     </div>
-    <p style="margin:5px 0;border-bottom:1px dashed #000;"></p>
+    <p style="margin:8px 0;border-bottom:2px dashed #000;"></p>
     ${itemsRows}
-    <p style="margin:5px 0;border-top:1px solid #000;border-bottom:1px solid #000;"></p>
-    <div style="font-size:11px;font-family:monospace;font-weight:bold;display:flex;justify-content:space-between;margin-top:4px;">
+    <p style="margin:8px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
+    <div style="font-size:16pt;font-weight:bold;display:flex;justify-content:space-between;margin-top:8px;">
       <span>TOTAL À PAYER :</span><span>${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
     </div>
-    <p style="text-align:center;margin-top:14px;font-size:9px;font-family:monospace;">Merci de votre visite !<br>À bientôt chez JOEL SHOP</p>
+    <p style="text-align:center;margin-top:24px;font-size:12pt;font-weight:bold;">Merci de votre visite !<br>À bientôt chez JOEL SHOP</p>
   `;
 
   const fullHtml = `<!DOCTYPE html>
@@ -112,49 +130,59 @@ export const triggerPrint = (invoiceData) => {
       <head>
         <meta charset="utf-8">
         <style>
-          @page { size: 80mm auto; margin: 3mm; }
-          body { font-family: 'Courier New', Courier, monospace; width: 74mm; margin: 0; padding: 0; color: #000; background: #fff; }
+          @page { margin: 8mm; }
+          * { box-sizing: border-box; }
+          body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13pt;
+            color: #000;
+            background: #fff;
+            margin: 0 auto;
+            padding: 10px;
+            max-width: 500px;
+          }
+          table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12pt; }
+          th { padding: 6px 2px; font-weight: bold; border-bottom: 2px solid #000; }
+          td { padding: 6px 2px; }
         </style>
       </head>
       <body>${printHTML}</body>
     </html>`;
 
-  const doClientPrint = () => {
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:0;border:none;';
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow.document;
-    doc.open();
-    doc.write(fullHtml);
-    doc.close();
-
-    setTimeout(() => {
-      try {
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print();
-      } catch (e) {
-        console.error('Print iframe error:', e);
-      }
-      setTimeout(() => {
-        if (iframe.parentNode) document.body.removeChild(iframe);
-      }, 2000);
-    }, 150);
-  };
-
-  // Trigger browser print immediately
-  doClientPrint();
-
-  // Send background log to server (non-blocking)
+  // Impression 100% silencieuse via le serveur backend — 0 popup, 0 aperçu, 0 dialog
   fetch('/api/print', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html: fullHtml, invoiceData })
-  }).catch(() => {});
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        showToast("🖨️ Ticket envoyé à l'imprimante !", "success");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`⚠️ Problème d'impression : ${err.error || 'Imprimante non disponible'}`, "error");
+      }
+    })
+    .catch((err) => {
+      console.error('Print request failed:', err);
+      showToast("⚠️ Erreur de connexion avec le service d'impression.", "error");
+    })
+    .finally(() => {
+      setTimeout(() => { isPrintingBusy = false; }, 2000);
+    });
 };
 
 export const triggerProformaPrint = (reservation) => {
+  const now = Date.now();
+  if (isPrintingBusy || now - lastPrintTimestamp < 3000) {
+    showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
+    return;
+  }
+  isPrintingBusy = true;
+  lastPrintTimestamp = now;
+
   const paymentsList = (reservation.payments || []).map((p, idx) => `
-    <div style="display:flex;justify-content:space-between;margin:2px 0;">
+    <div style="display:flex;justify-content:space-between;margin:4px 0;">
       <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}) :</span>
       <span>${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
     </div>
@@ -162,10 +190,10 @@ export const triggerProformaPrint = (reservation) => {
 
   const itemsList = (reservation.items || []).map(item => `
     <tr>
-      <td style="padding:2px 1px;text-align:left;">${item.categoryName}</td>
-      <td style="padding:2px 1px;text-align:center;">${item.qty || 1}</td>
-      <td style="padding:2px 1px;text-align:right;">${Math.round(item.price).toLocaleString('fr-FR')}</td>
-      <td style="padding:2px 1px;text-align:right;font-weight:bold;">${Math.round(item.price * (item.qty || 1)).toLocaleString('fr-FR')}</td>
+      <td style="padding:6px 2px;text-align:left;">${item.categoryName}</td>
+      <td style="padding:6px 2px;text-align:center;">${item.qty || 1}</td>
+      <td style="padding:6px 2px;text-align:right;">${Math.round(item.price).toLocaleString('fr-FR')}</td>
+      <td style="padding:6px 2px;text-align:right;font-weight:bold;">${Math.round(item.price * (item.qty || 1)).toLocaleString('fr-FR')}</td>
     </tr>
   `).join('');
 
@@ -173,47 +201,47 @@ export const triggerProformaPrint = (reservation) => {
   const remaining = Math.max(0, (Number(reservation.totalAmount) || 0) - totalPaid);
 
   const printHTML = `
-    <div style="text-align:center;margin-bottom:6px;font-family:monospace;">
-      <h2 style="margin:0;font-size:15px;font-weight:bold;letter-spacing:3px;">JOEL SHOP</h2>
-      <p style="margin:2px 0 0 0;font-size:10px;letter-spacing:1px;font-weight:bold;">--- REÇU PROFORMA (RÉSERVATION) ---</p>
+    <div style="text-align:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:22pt;font-weight:bold;letter-spacing:4px;">JOEL SHOP</h2>
+      <p style="margin:4px 0;font-size:13pt;letter-spacing:1px;font-weight:bold;">─── REÇU PROFORMA (RÉSERVATION) ───</p>
     </div>
-    <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
-    <div style="font-size:10px;font-family:monospace;">
-      <div style="display:flex;justify-content:space-between;"><span>N° Réservation :</span><b>${reservation.reservationNo}</b></div>
-      <div style="display:flex;justify-content:space-between;"><span>Date           :</span><span>${new Date(reservation.createdAt).toLocaleString('fr-FR')}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Client         :</span><span>${reservation.clientName}${reservation.clientPhone ? ` (${reservation.clientPhone})` : ''}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Enregistré par :</span><span>${reservation.createdBy?.name || 'Caissière'}</span></div>
-      <div style="display:flex;justify-content:space-between;"><span>Statut         :</span><b>${reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'}</b></div>
+    <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+    <div style="font-size:13pt;">
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>N° Réservation :</span><b>${reservation.reservationNo}</b></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Date           :</span><span>${new Date(reservation.createdAt).toLocaleString('fr-FR')}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Client         :</span><span>${reservation.clientName}${reservation.clientPhone ? ` (${reservation.clientPhone})` : ''}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Enregistré par :</span><span>${reservation.createdBy?.name || 'Caissière'}</span></div>
+      <div style="display:flex;justify-content:space-between;margin:4px 0;"><span>Statut         :</span><b>${reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'}</b></div>
     </div>
-    <p style="margin:5px 0;border-bottom:1px dashed #000;"></p>
-    <table style="width:100%;border-collapse:collapse;margin:0;font-size:10px;">
+    <p style="margin:8px 0;border-bottom:2px dashed #000;"></p>
+    <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:12pt;">
       <thead>
-        <tr style="border-bottom:1px solid #000;">
-          <th style="text-align:left;padding:2px 1px;font-weight:bold;">Désignation</th>
-          <th style="text-align:center;padding:2px 1px;font-weight:bold;">Qté</th>
-          <th style="text-align:right;padding:2px 1px;font-weight:bold;">P/U</th>
-          <th style="text-align:right;padding:2px 1px;font-weight:bold;">Total</th>
+        <tr style="border-bottom:2px solid #000;">
+          <th style="text-align:left;padding:6px 2px;font-weight:bold;">Désignation</th>
+          <th style="text-align:center;padding:6px 2px;font-weight:bold;">Qté</th>
+          <th style="text-align:right;padding:6px 2px;font-weight:bold;">P/U</th>
+          <th style="text-align:right;padding:6px 2px;font-weight:bold;">Total</th>
         </tr>
       </thead>
       <tbody>${itemsList}</tbody>
     </table>
-    <p style="margin:5px 0;border-top:1px solid #000;border-bottom:1px solid #000;"></p>
-    <div style="font-size:10px;font-family:monospace;">
-      <div style="display:flex;justify-content:space-between;font-weight:bold;">
+    <p style="margin:8px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
+    <div style="font-size:13pt;">
+      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14pt;">
         <span>MONTANT TOTAL  :</span><span>${Math.round(reservation.totalAmount).toLocaleString('fr-FR')} FCFA</span>
       </div>
-      <p style="margin:3px 0;border-bottom:1px dashed #000;"></p>
-      <div style="font-weight:bold;margin:4px 0 2px 0;">HISTORIQUE DES VERSEMENTS (${reservation.payments?.length || 0}/3) :</div>
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+      <div style="font-weight:bold;margin:6px 0 4px 0;">HISTORIQUE DES VERSEMENTS (${reservation.payments?.length || 0}/3) :</div>
       ${paymentsList || '<div style="font-style:italic;">Aucun versement effectué</div>'}
-      <p style="margin:4px 0;border-bottom:1px dashed #000;"></p>
-      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:11px;">
+      <p style="margin:6px 0;border-bottom:2px dashed #000;"></p>
+      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14pt;">
         <span>TOTAL DÉJÀ PAYÉ :</span><span>${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
       </div>
-      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:11px;margin-top:2px;">
+      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:15pt;margin-top:4px;">
         <span>RESTE À PAYER    :</span><span>${Math.round(remaining).toLocaleString('fr-FR')} FCFA</span>
       </div>
     </div>
-    <p style="text-align:center;margin-top:14px;font-size:8px;font-family:monospace;">
+    <p style="text-align:center;margin-top:24px;font-size:11pt;font-weight:bold;">
       Document Proforma de Réservation.<br>
       La facture définitive est remise après solde complet.<br>
       Merci pour votre confiance - JOEL SHOP
@@ -225,42 +253,41 @@ export const triggerProformaPrint = (reservation) => {
       <head>
         <meta charset="utf-8">
         <style>
-          @page { size: 80mm auto; margin: 3mm; }
-          body { font-family: 'Courier New', Courier, monospace; width: 74mm; margin: 0; padding: 0; color: #000; background: #fff; }
+          @page { margin: 8mm; }
+          * { box-sizing: border-box; }
+          body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13pt;
+            color: #000;
+            background: #fff;
+            margin: 0 auto;
+            padding: 10px;
+            max-width: 500px;
+          }
         </style>
       </head>
       <body>${printHTML}</body>
     </html>`;
 
-  const doClientPrint = () => {
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:0;border:none;';
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow.document;
-    doc.open();
-    doc.write(fullHtml);
-    doc.close();
-
-    setTimeout(() => {
-      try {
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print();
-      } catch (e) {
-        console.error('Print iframe error:', e);
-      }
-      setTimeout(() => {
-        if (iframe.parentNode) document.body.removeChild(iframe);
-      }, 2000);
-    }, 150);
-  };
-
-  // Trigger browser print immediately
-  doClientPrint();
-
-  // Send background log to server (non-blocking)
+  // Impression 100% silencieuse via le serveur backend — 0 popup, 0 aperçu, 0 dialog
   fetch('/api/print', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html: fullHtml, reservation })
-  }).catch(() => {});
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        showToast("🖨️ Reçu Proforma envoyé à l'imprimante !", "success");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`⚠️ Problème d'impression : ${err.error || 'Imprimante non disponible'}`, "error");
+      }
+    })
+    .catch((err) => {
+      console.error('Proforma print request failed:', err);
+      showToast("⚠️ Erreur de connexion avec le service d'impression.", "error");
+    })
+    .finally(() => {
+      setTimeout(() => { isPrintingBusy = false; }, 2000);
+    });
 };

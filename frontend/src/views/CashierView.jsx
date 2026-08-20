@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Search, ShoppingBag, Clock, PlusCircle } from 'lucide-react';
+import { Search, ShoppingBag, Clock, PlusCircle, Receipt, ChevronDown, ChevronUp } from 'lucide-react';
 import Field, { inputCls } from '../components/Field';
 import ReservationsView from '../components/ReservationsView';
+import CashierInvoicesView from '../components/CashierInvoicesView';
 import { formatFCFA, triggerPrint, triggerProformaPrint, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
@@ -9,9 +10,14 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
   const [activeTab, setActiveTab] = useState('sale'); // 'sale' | 'reservations'
   const [cart, setCart] = useState([]);
   const [clientName, setClientName] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [categorySearch, setCategorySearch] = useState('');
+
+  // Reservation Mode state inside CashierView
+  const [showReservationMode, setShowReservationMode] = useState(false);
+  const [reservationAdvanceInput, setReservationAdvanceInput] = useState('');
 
   const [expandedCatIds, setExpandedCatIds] = useState([]);
 
@@ -62,8 +68,18 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
 
   const handleValidateAndPrint = async () => {
     if (cart.length === 0) return alert('Le panier est vide');
+    
+    // Obligation : au moins le Nom OU le Numéro de téléphone avant impression
+    if (!clientName.trim() && !clientPhone.trim()) {
+      return alert('Veuillez renseigner au moins le nom du client ou son numéro de téléphone avant d\'imprimer le ticket.');
+    }
+
     const invalidLine = cart.find(item => isNaN(item.price) || item.price <= 0 || isNaN(item.qty) || item.qty < 1);
     if (invalidLine) return alert(`Vérifiez la ligne "${invalidLine.categoryName}"`);
+
+    const formattedClient = clientName.trim() && clientPhone.trim()
+      ? `${clientName.trim()} (${clientPhone.trim()})`
+      : clientName.trim() || clientPhone.trim();
 
     setIsSubmittingOrder(true);
     try {
@@ -75,7 +91,7 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
           paymentMethod: paymentMethod || 'CASH',
           items: getCartItemsForServer(),
           createdById: currentUser.id,
-          clientName: clientName.trim()
+          clientName: formattedClient
         })
       });
       const invoiceData = await res.json();
@@ -85,6 +101,7 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
       setCart([]);
       setPaymentMethod('');
       setClientName('');
+      setClientPhone('');
       setIsSubmittingOrder(false);
     } catch {
       alert('Erreur réseau');
@@ -92,9 +109,13 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
     }
   };
 
-  const handleCreateReservationFromCart = async () => {
+  const handleConfirmReservation = async () => {
     if (cart.length === 0) return alert('Le panier est vide');
     if (!clientName.trim()) return alert('Veuillez entrer le nom du client pour la réservation.');
+    const advanceNum = parseFloat(reservationAdvanceInput) || 0;
+    if (advanceNum <= 0) return alert('Veuillez entrer un montant d\'avance valide (> 0 FCFA).');
+    if (advanceNum > getCartTotal() + 0.01) return alert(`L'avance (${formatFCFA(advanceNum)}) ne peut pas dépasser le montant total (${formatFCFA(getCartTotal())}).`);
+
     const invalidLine = cart.find(item => isNaN(item.price) || item.price <= 0 || isNaN(item.qty) || item.qty < 1);
     if (invalidLine) return alert(`Vérifiez la ligne "${invalidLine.categoryName}"`);
 
@@ -105,17 +126,18 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientName: clientName.trim(),
+          clientPhone: clientPhone.trim(),
           totalAmount: getCartTotal(),
           items: cart.map(item => ({
             categoryName: item.categoryName,
-            price: Number(item.price) || 0,
-            qty: Number(item.qty) || 1
+            price: parseFloat(item.price) || 0,
+            qty: parseInt(item.qty, 10) || 1
           })),
           createdById: currentUser.id,
-          initialPayment: paymentMethod ? {
-            amount: getCartTotal(),
-            paymentMethod: paymentMethod
-          } : null
+          initialPayment: {
+            amount: advanceNum,
+            paymentMethod: paymentMethod || 'CASH'
+          }
         })
       });
       const data = await res.json();
@@ -125,6 +147,9 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
       setCart([]);
       setPaymentMethod('');
       setClientName('');
+      setClientPhone('');
+      setReservationAdvanceInput('');
+      setShowReservationMode(false);
       setIsSubmittingOrder(false);
       setActiveTab('reservations');
     } catch {
@@ -164,12 +189,25 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
           )}
         >
           <Clock className="h-4 w-4" />
-          <span>Réservations & Acomptes</span>
+          <span>Gestion des Réservations</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('my_invoices')}
+          className={cx(
+            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer',
+            activeTab === 'my_invoices' ? 'bg-gold text-black shadow-md shadow-gold/20' : 'bg-white/[0.03] text-foreground/70 hover:bg-white/10'
+          )}
+        >
+          <Receipt className="h-4 w-4" />
+          <span>Mes Ventes & Réimpression</span>
         </button>
       </div>
 
       {activeTab === 'reservations' ? (
         <ReservationsView categories={categories} currentUser={currentUser} serverOnline={serverOnline} />
+      ) : activeTab === 'my_invoices' ? (
+        <CashierInvoicesView currentUser={currentUser} serverOnline={serverOnline} />
       ) : (
         <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
           <div className="flex w-72 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5">
@@ -195,12 +233,12 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
 
                     return (
                       <div key={cat.id} className="rounded-xl border border-white/5 bg-white/[0.015] overflow-hidden">
-                        <div className="flex items-center justify-between p-2 hover:bg-white/[0.04] transition">
+                        <div className="flex items-center justify-between p-2.5 hover:bg-white/[0.04] transition group">
                           <button
                             type="button"
                             onClick={() => handleAddItemToCart(cat.name)}
                             disabled={!serverOnline}
-                            className="flex-1 text-left text-xs font-semibold text-foreground hover:text-gold transition truncate cursor-pointer"
+                            className="flex-1 text-left text-xs font-semibold text-foreground hover:text-gold transition truncate cursor-pointer py-1"
                             title={`Ajouter ${cat.name} au panier`}
                           >
                             {cat.name}
@@ -209,10 +247,11 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
                             <button
                               type="button"
                               onClick={() => toggleExpandCategory(cat.id)}
-                              className="text-[10px] text-gold/90 bg-gold/10 hover:bg-gold/20 px-2 py-0.5 rounded-md font-bold transition ml-1 cursor-pointer"
-                              title="Voir les sous-catégories"
+                              className="text-xs text-gold font-bold bg-gold/15 hover:bg-gold/30 px-3 py-1.5 rounded-xl transition ml-2 cursor-pointer border border-gold/30 flex items-center gap-1 shrink-0 shadow-sm"
+                              title={isExpanded ? "Masquer les sous-catégories" : "Afficher les sous-catégories"}
                             >
-                              {isExpanded ? '▲' : `▼ ${cat.subCategories.length}`}
+                              <span>{cat.subCategories.length} sous-cat.</span>
+                              {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                             </button>
                           )}
                         </div>
@@ -288,7 +327,7 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
                             />
                           </td>
                           <td className="px-3 py-2 font-mono text-xs font-semibold text-gold">
-                            {formatFCFA((Number(item.price) || 0) * (Number(item.qty) || 0))}
+                            {formatFCFA((parseFloat(item.price) || 0) * (parseInt(item.qty, 10) || 0))}
                           </td>
                           <td className="px-3 py-2">
                             <button type="button" onClick={() => handleRemoveFromCart(item.id)} className="text-xs font-semibold text-foreground/50 hover:text-red-400">Suppr</button>
@@ -301,44 +340,153 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
               </div>
             </div>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] border-t border-white/10 pt-3">
-              <Field label="Nom du client (Optionnel)">
-                <input type="text" placeholder="Nom du client" value={clientName} onChange={(e) => setClientName(e.target.value)} className={cx(inputCls, 'bg-zinc-900 border-white/10 text-foreground text-xs')} />
+            {/* Client Info Inputs: 2 inputs side-by-side */}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 border-t border-white/10 pt-3">
+              <Field label="Nom du client (Au moins 1 des 2 requis) *">
+                <input
+                  type="text"
+                  placeholder="Nom du client"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className={cx(inputCls, 'bg-zinc-900 border-white/10 text-foreground text-xs font-medium')}
+                />
               </Field>
 
-              <div className="grid gap-1.5">
-                <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground/50">Mode de paiement (Optionnel)</div>
-                <div className="flex gap-2">
-                  <button onClick={() => setPaymentMethod(prev => prev === 'CASH' ? '' : 'CASH')} className={cx('rounded-xl px-3 py-2 text-xs font-bold cursor-pointer transition border', paymentMethod === 'CASH' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Espèces</button>
-                  <button onClick={() => setPaymentMethod(prev => prev === 'ONLINE' ? '' : 'ONLINE')} className={cx('rounded-xl px-3 py-2 text-xs font-bold cursor-pointer transition border', paymentMethod === 'ONLINE' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Mobile Money</button>
-                  <button onClick={() => setPaymentMethod(prev => prev === 'ORANGE_MONEY' ? '' : 'ORANGE_MONEY')} className={cx('rounded-xl px-3 py-2 text-xs font-bold cursor-pointer transition border', paymentMethod === 'ORANGE_MONEY' ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Orange Money</button>
-                </div>
+              <Field label="Numéro de téléphone (Au moins 1 des 2 requis) *">
+                <input
+                  type="text"
+                  placeholder="Ex: 0700000000"
+                  value={clientPhone}
+                  onChange={(e) => setClientPhone(e.target.value)}
+                  className={cx(inputCls, 'bg-zinc-900 border-white/10 text-foreground text-xs font-medium')}
+                />
+              </Field>
+            </div>
+            {!clientName.trim() && !clientPhone.trim() && !showReservationMode && (
+              <div className="mt-1 text-[11px] text-amber-400 font-semibold italic text-right">
+                ⚠ Saisissez le nom du client ou son téléphone pour valider.
+              </div>
+            )}
+
+            {/* Payment Method Selector */}
+            <div className="mt-2 grid gap-1.5">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground/50">Mode de paiement (Optionnel)</div>
+              <div className="flex gap-2">
+                <button onClick={() => setPaymentMethod(prev => prev === 'CASH' ? '' : 'CASH')} className={cx('rounded-xl px-3.5 py-1.5 text-xs font-bold cursor-pointer transition border', paymentMethod === 'CASH' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Espèces</button>
+                <button onClick={() => setPaymentMethod(prev => prev === 'ONLINE' ? '' : 'ONLINE')} className={cx('rounded-xl px-3.5 py-1.5 text-xs font-bold cursor-pointer transition border', paymentMethod === 'ONLINE' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Mobile Money</button>
+                <button onClick={() => setPaymentMethod(prev => prev === 'ORANGE_MONEY' ? '' : 'ORANGE_MONEY')} className={cx('rounded-xl px-3.5 py-1.5 text-xs font-bold cursor-pointer transition border', paymentMethod === 'ORANGE_MONEY' ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}>Orange Money</button>
               </div>
             </div>
 
+            {/* Inline Reservation Advance Panel if activated */}
+            {showReservationMode && (
+              <div className="mt-3 p-4 bg-purple-950/40 border-2 border-purple-500/50 rounded-2xl space-y-3 animate-in fade-in duration-200">
+                <div className="text-xs font-black text-purple-300 uppercase tracking-wider flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-purple-400" />
+                    <span>Mode Réservation en cours — Saisir l'Acompte</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReservationMode(false);
+                      setReservationAdvanceInput('');
+                    }}
+                    className="rounded-lg px-2.5 py-1 bg-white/10 text-white hover:bg-white/20 text-xs font-bold transition cursor-pointer"
+                  >
+                    ✕ Annuler la réservation
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-[10px] uppercase font-bold text-purple-300/80 mb-1 block">
+                      Montant de l'acompte / avance (FCFA) *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={getCartTotal()}
+                      placeholder="Ex: 5000"
+                      value={reservationAdvanceInput}
+                      onChange={(e) => setReservationAdvanceInput(e.target.value)}
+                      className={cx(inputCls, 'bg-zinc-900 border-purple-400/60 text-gold font-mono font-black text-base focus:border-purple-400')}
+                    />
+                  </div>
+                  <div className="self-end">
+                    <button
+                      type="button"
+                      onClick={handleConfirmReservation}
+                      disabled={isSubmittingOrder || !reservationAdvanceInput || Number(reservationAdvanceInput) <= 0 || Number(reservationAdvanceInput) > getCartTotal() || !clientName.trim() || !serverOnline}
+                      className="rounded-xl bg-gold px-6 py-3 text-xs font-black text-black hover:bg-gold/85 disabled:opacity-30 transition cursor-pointer shadow-lg shadow-gold/20 flex items-center gap-2"
+                    >
+                      <span>{isSubmittingOrder ? 'Enregistrement...' : 'Valider la Réservation & Reçu'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Helpful Validation Alerts */}
+                <div className="space-y-1 text-[11px] font-semibold">
+                  {!clientName.trim() && (
+                    <div className="text-amber-400 flex items-center gap-1">
+                      <span>⚠ Le nom du client en haut est obligatoire pour créer la réservation.</span>
+                    </div>
+                  )}
+                  {(!reservationAdvanceInput || Number(reservationAdvanceInput) <= 0) && (
+                    <div className="text-purple-300/90 italic">
+                      ℹ Saisissez le montant de l'acompte (ex: 5000) pour activer le bouton de validation.
+                    </div>
+                  )}
+                  {Number(reservationAdvanceInput) > getCartTotal() && (
+                    <div className="text-red-400">
+                      ⚠ L'acompte ne peut pas dépasser le total de la commande ({formatFCFA(getCartTotal())}).
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Total & Main Buttons */}
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-white/10 pt-3">
               <div className="p-1">
                 <div className="uppercase tracking-wider text-[10px] text-foreground/40 font-bold">Montant Total</div>
                 <div className="text-2xl font-black text-gold">{formatFCFA(getCartTotal())}</div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex items-center gap-3">
+                {/* Button 1: Créer Réservation (Distinct Purple Color) */}
                 <button
                   type="button"
-                  onClick={handleCreateReservationFromCart}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline}
-                  className="rounded-2xl border border-gold/50 bg-gold/15 py-3 px-4 text-xs font-bold text-gold hover:bg-gold/25 disabled:opacity-40 transition flex items-center gap-1.5 cursor-pointer"
-                  title="Créer une réservation avec versement en 3 tranches"
+                  onClick={() => {
+                    if (cart.length === 0) return alert('Le panier est vide');
+                    setShowReservationMode(true);
+                    if (!paymentMethod) setPaymentMethod('CASH');
+                  }}
+                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
+                  className={cx(
+                    'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
+                    showReservationMode
+                      ? 'bg-purple-900/50 text-purple-300 border border-purple-500/40 opacity-80 cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 border border-purple-400/30 disabled:opacity-40'
+                  )}
+                  title="Créer une réservation avec acompte"
                 >
                   <PlusCircle className="h-4 w-4" />
-                  <span>Créer Réservation</span>
+                  <span>{showReservationMode ? 'Mode Réservation Actif' : 'Créer Réservation'}</span>
                 </button>
 
+                {/* Button 2: Valider Ticket (Distinct Emerald Green Color, Disabled during reservation mode) */}
                 <button
                   type="button"
                   onClick={handleValidateAndPrint}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline}
-                  className="rounded-2xl bg-gold py-3 px-8 text-xs font-extrabold text-black hover:bg-gold/85 disabled:opacity-40 transition shadow-lg shadow-gold/10 cursor-pointer"
+                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
+                  className={cx(
+                    'rounded-2xl py-3 px-8 text-xs font-black transition shadow-lg cursor-pointer',
+                    showReservationMode
+                      ? 'bg-zinc-800 text-foreground/30 border border-white/10 opacity-30 cursor-not-allowed'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20 disabled:opacity-40'
+                  )}
+                  title={showReservationMode ? 'Désactivé pendant la création de réservation' : 'Valider la vente directe'}
                 >
                   {isSubmittingOrder ? 'Enregistrement...' : 'Valider Ticket'}
                 </button>

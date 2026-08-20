@@ -4,7 +4,8 @@ import LoginView from './views/LoginView';
 import CashierView from './views/CashierView';
 import AdminView from './views/AdminView';
 import { API_BASE } from './utils/constants';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, Printer, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { cx } from './utils/helpers';
 
 // Error Boundary to prevent full blank-screen crashes
 class ErrorBoundary extends React.Component {
@@ -50,6 +51,17 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [categories, setCategories] = useState([]);
   const [serverOnline, setServerOnline] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    const handleToast = (e) => {
+      const { message, type = 'success' } = e.detail || {};
+      setToast({ message, type });
+      setTimeout(() => setToast(null), 4500);
+    };
+    window.addEventListener('pos:toast', handleToast);
+    return () => window.removeEventListener('pos:toast', handleToast);
+  }, []);
 
   const [currentView, setCurrentView] = useState(() => {
     try {
@@ -172,6 +184,19 @@ export default function App() {
             />
           )}
         </main>
+
+        {/* Global Toast Notification for Printer & System status */}
+        {toast && (
+          <div className={cx(
+            'fixed bottom-6 right-6 z-[100] flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-2xl animate-in slide-in-from-bottom-5 duration-200 text-xs font-bold transition-all',
+            toast.type === 'error'
+              ? 'bg-red-950/95 border-red-500/50 text-red-300 shadow-red-500/20'
+              : 'bg-emerald-950/95 border-emerald-500/50 text-emerald-300 shadow-emerald-500/20'
+          )}>
+            {toast.type === 'error' ? <AlertCircle className="h-4 w-4 shrink-0 text-red-400" /> : <Printer className="h-4 w-4 shrink-0 text-emerald-400" />}
+            <span>{toast.message}</span>
+          </div>
+        )}
       </div>
     </ErrorBoundary>
   );

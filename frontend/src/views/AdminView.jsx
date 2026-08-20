@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BarChart3, User as UserIcon, Settings, Award, Clock } from 'lucide-react';
 import { triggerPrint, cx } from '../utils/helpers';
 import Dashboard from './admin/Dashboard';
@@ -19,12 +19,18 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
   const [reservationPayments, setReservationPayments] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [selectedReservationId, setSelectedReservationId] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   // Independent filters for reservations tab
   const [reservationFilterDate, setReservationFilterDate] = useState('');
   const [reservationFilterCashier, setReservationFilterCashier] = useState('');
+  // Ref to track the latest fetch — stale responses are discarded
+  const fetchIdRef = useRef(0);
 
   // Unified atomic fetch function: ensures invoices, reservationPayments and reservations update together in sync (for dashboard)
   const refreshDashboardData = async (date = filterDate, cashierId = filterCashier, status = filterStatus) => {
+    // Tag this fetch; ignore any response that arrives after a newer fetch has started
+    const fetchId = ++fetchIdRef.current;
+    setDashboardLoading(true);
     try {
       const params = new URLSearchParams();
       if (date) params.append('date', date);
@@ -38,6 +44,9 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
         fetch(`${API_BASE}/invoices?${invParams.toString()}`),
         fetch(`${API_BASE}/reservation-payments?${params.toString()}`)
       ]);
+
+      // Discard result if a newer fetch has already been launched
+      if (fetchId !== fetchIdRef.current) return;
 
       if (statsRes && statsRes.ok) {
         const data = await statsRes.json();
@@ -55,6 +64,8 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
       }
     } catch (e) {
       console.error('refreshDashboardData error:', e);
+    } finally {
+      if (fetchId === fetchIdRef.current) setDashboardLoading(false);
     }
   };
 
@@ -162,6 +173,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
               filterCashier={filterCashier}
               setFilterCashier={setFilterCashier}
               fetchInvoices={fetchInvoices}
+              loading={dashboardLoading}
             />
           )}
 

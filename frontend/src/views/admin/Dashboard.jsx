@@ -8,7 +8,7 @@ import { API_BASE } from '../../utils/constants';
 
 const SHOP_NAME = 'JOEL SHOP';
 
-export default function Dashboard({ stats = {}, invoices = [], reservationPayments = [], reservations = [], users = [], filterDate, setFilterDate, filterCashier, setFilterCashier, fetchInvoices }) {
+export default function Dashboard({ stats = {}, invoices = [], reservationPayments = [], reservations = [], users = [], filterDate, setFilterDate, filterCashier, setFilterCashier, fetchInvoices, loading = false }) {
   const [pendingDeleteInvoice, setPendingDeleteInvoice] = useState(null);
   const [adminPinInput, setAdminPinInput] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -125,15 +125,11 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   const isFiltered = Boolean(filterDate || filterCashier);
 
   const handleDateChange = (newDate) => {
-    const nextDate = newDate || '';
-    setFilterDate(nextDate);
-    if (typeof fetchInvoices === 'function') fetchInvoices(nextDate, filterCashier);
+    setFilterDate(newDate || '');
   };
 
   const handleCashierChange = (newCashier) => {
-    const nextCashier = newCashier || '';
-    setFilterCashier(nextCashier);
-    if (typeof fetchInvoices === 'function') fetchInvoices(filterDate, nextCashier);
+    setFilterCashier(newCashier || '');
   };
 
   const formatFilterDate = (dateStr) => {
@@ -201,10 +197,12 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   return (
     <div className="space-y-6">
       {/* Top Cards Section */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-4 transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
         <div className="rounded-2xl bg-white/[0.02] p-4 border border-gold/20 text-sm text-foreground/80 shadow-lg shadow-gold/5">
           <div className="text-[10px] uppercase tracking-[0.24em] text-gold font-semibold flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse"></span>
+            {loading
+              ? <span className="w-2 h-2 rounded-full bg-gold animate-ping inline-block" />
+              : <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />}
             {filterDate ? `Total Encaissements (${formatFilterDate(filterDate)})` : 'Total Encaissements (Toutes les dates)'}
           </div>
           <div className="mt-3 text-2xl font-bold text-gold">{formatFCFA(filteredTotal)}</div>
@@ -366,7 +364,14 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
 
           {/* Paper Sheet Invoice Preview Modal / Sidebar */}
           {previewInvoice && (
-            <div className="w-[420px] shrink-0 rounded-2xl border border-zinc-300 bg-zinc-100 p-1 overflow-hidden shadow-2xl animate-in slide-in-from-right-4 duration-200">
+            <div
+              className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-all duration-300 cursor-pointer p-4"
+              onClick={() => setPreviewInvoice(null)}
+            >
+              <div
+                className="w-full max-w-md bg-zinc-100 border border-zinc-300 rounded-2xl p-1 overflow-hidden shadow-2xl animate-in slide-in-from-right-4 duration-200 cursor-default self-start mt-12 mr-6 max-h-[85vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
               {/* Paper Top Controls */}
               <div className="flex items-center justify-between px-3 py-2 bg-zinc-800 text-white rounded-t-xl">
                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gold">
@@ -477,14 +482,21 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
                 </button>
               </div>
             </div>
+          </div>
           )}
         </div>
       </section>
 
       {/* Admin Password confirmation modal for delete */}
       {pendingDeleteInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-zinc-900 p-6 space-y-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+          onClick={() => { setPendingDeleteInvoice(null); setAdminPinInput(''); setDeleteError(''); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-red-500/30 bg-zinc-900 p-6 space-y-4 shadow-2xl cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="text-sm font-bold text-red-400 flex items-center gap-2">
                 <Trash2 className="h-4 w-4" />
