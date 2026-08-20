@@ -24,16 +24,20 @@ export const showToast = (message, type = 'success') => {
   }
 };
 
+let lastPrintedId = null;
 let lastPrintTimestamp = 0;
 let isPrintingBusy = false;
 
 export const triggerPrint = (invoiceData) => {
   const now = Date.now();
-  if (isPrintingBusy || now - lastPrintTimestamp < 3000) {
+  const printId = invoiceData.invoiceNumber || invoiceData.id || JSON.stringify(invoiceData.items || []);
+
+  if (isPrintingBusy || (lastPrintedId === printId && now - lastPrintTimestamp < 6000) || (now - lastPrintTimestamp < 3500)) {
     showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
     return;
   }
   isPrintingBusy = true;
+  lastPrintedId = printId;
   lastPrintTimestamp = now;
 
   const isZ = invoiceData.isZReport;
@@ -130,18 +134,19 @@ export const triggerPrint = (invoiceData) => {
       <head>
         <meta charset="utf-8">
         <style>
-          @page { margin: 8mm; }
+          @page { size: 80mm auto; margin: 2mm; }
           * { box-sizing: border-box; }
           body {
             font-family: 'Courier New', Courier, monospace;
-            font-size: 13pt;
+            font-size: 11pt;
+            font-weight: bold;
             color: #000;
             background: #fff;
+            width: 74mm;
             margin: 0 auto;
-            padding: 10px;
-            max-width: 500px;
+            padding: 2px;
           }
-          table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12pt; }
+          table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 10pt; }
           th { padding: 6px 2px; font-weight: bold; border-bottom: 2px solid #000; }
           td { padding: 6px 2px; }
         </style>
@@ -168,17 +173,20 @@ export const triggerPrint = (invoiceData) => {
       showToast("⚠️ Erreur de connexion avec le service d'impression.", "error");
     })
     .finally(() => {
-      setTimeout(() => { isPrintingBusy = false; }, 2000);
+      setTimeout(() => { isPrintingBusy = false; }, 6000);
     });
 };
 
 export const triggerProformaPrint = (reservation) => {
   const now = Date.now();
-  if (isPrintingBusy || now - lastPrintTimestamp < 3000) {
+  const printId = reservation.reservationNo || reservation.id || 'proforma';
+
+  if (isPrintingBusy || (lastPrintedId === printId && now - lastPrintTimestamp < 6000) || (now - lastPrintTimestamp < 3500)) {
     showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
     return;
   }
   isPrintingBusy = true;
+  lastPrintedId = printId;
   lastPrintTimestamp = now;
 
   const paymentsList = (reservation.payments || []).map((p, idx) => `
@@ -253,17 +261,21 @@ export const triggerProformaPrint = (reservation) => {
       <head>
         <meta charset="utf-8">
         <style>
-          @page { margin: 8mm; }
+          @page { size: 80mm auto; margin: 2mm; }
           * { box-sizing: border-box; }
           body {
             font-family: 'Courier New', Courier, monospace;
-            font-size: 13pt;
+            font-size: 11pt;
+            font-weight: bold;
             color: #000;
             background: #fff;
+            width: 74mm;
             margin: 0 auto;
-            padding: 10px;
-            max-width: 500px;
+            padding: 2px;
           }
+          table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 10pt; }
+          th { padding: 4px 1px; font-weight: bold; border-bottom: 1px solid #000; }
+          td { padding: 4px 1px; }
         </style>
       </head>
       <body>${printHTML}</body>
@@ -288,6 +300,6 @@ export const triggerProformaPrint = (reservation) => {
       showToast("⚠️ Erreur de connexion avec le service d'impression.", "error");
     })
     .finally(() => {
-      setTimeout(() => { isPrintingBusy = false; }, 2000);
+      setTimeout(() => { isPrintingBusy = false; }, 6000);
     });
 };

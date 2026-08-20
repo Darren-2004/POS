@@ -1375,19 +1375,41 @@ app.get('/api/stats', async (req, res) => {
 // SERVIR L'APPLICATION FRONTEND STATIQUE
 // -------------------------------------------------------------
 // Endpoint de réception des jobs d'impression (demo)
-let lastServerPrintTimestamp = 0;
+const serverPrintJobs = new Map(); // jobId → timestamp
 
 app.post('/api/print', async (req, res) => {
   try {
     const now = Date.now();
+    const { html } = req.body || {};
+    if (!html) return res.status(400).json({ error: 'No html provided' });
+
+    // Create a short hash of the content to uniquely identify each print job
+    const crypto = await import('crypto');
+    const jobId = crypto.createHash('md5').update(html.slice(0, 500)).digest('hex');
+
+    // Block exact duplicate within 6 seconds (same ticket sent twice)
+    if (serverPrintJobs.has(jobId)) {
+      const prevTime = serverPrintJobs.get(jobId);
+      if (now - prevTime < 6000) {
+        console.log('⚠️ Duplicate print request blocked (jobId:', jobId, ')');
+        return res.json({ ok: true, message: 'Duplicate print request blocked' });
+      }
+    }
+
+    // Global cooldown: any print within 2.5 seconds is ignored
     if (now - lastServerPrintTimestamp < 2500) {
-      console.log('Ignored duplicate print request (throttled)');
+      console.log('⚠️ Throttled print request (global cooldown)');
       return res.json({ ok: true, message: 'Print request throttled' });
     }
     lastServerPrintTimestamp = now;
+    serverPrintJobs.set(jobId, now);
 
-    const { html } = req.body || {};
-    if (!html) return res.status(400).json({ error: 'No html provided' });
+    // Clean up old entries from the map (keep < 100 entries)
+    if (serverPrintJobs.size > 100) {
+      const cutoff = now - 60000;
+      for (const [k, t] of serverPrintJobs) { if (t < cutoff) serverPrintJobs.delete(k); }
+    }
+
 
     const outDir = path.join(__dirname, 'print_jobs');
     await fs.mkdir(outDir, { recursive: true });
@@ -1492,7 +1514,7 @@ app.post('/api/print', async (req, res) => {
         path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'),
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        // Edge is built into 100% of Windows 10/11 PCs and supports --print-to-printer identically
+        // Edge is built into 100% of Windows 10/11 PCs and supports --print-to-pdf and --print-to-printer
         path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
         path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
         'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -1516,34 +1538,55 @@ app.post('/api/print', async (req, res) => {
       if (browserBin) {
         const printerName = process.env.PRINTER_NAME || '';
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
-        
-        // Native silent printing via Chromium engine (Chrome or Edge)
-        const printerArg = printerName ? `--printer-name="${printerName}"` : '';
-        const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+        const formattedPdfPath = pdfPath.replace(/\\/g, '/');
 
-        console.log('Executing Windows direct print using:', browserBin);
-        exec(printCmd, (err) => {
+        // Step 1: Render HTML to 80mm thermal PDF (3.14961 inches wide)
+        const generatePdfCmd = [
+          `"${browserBin}"`,
+          '--headless=new',
+          '--no-sandbox',
+          '--disable-gpu',
+          '--run-all-compositor-stages-before-draw',
+          '--virtual-time-budget=5000',
+          `--print-to-pdf="${formattedPdfPath}"`,
+          '--print-to-pdf-no-header',
+          '--no-pdf-header-footer',
+          '--paper-width=3.14961',
+          '--paper-height=20',
+          '--margin-top=0 --margin-bottom=0 --margin-left=0 --margin-right=0',
+          `"file:///${formattedHtmlPath}"`
+        ].join(' ');
+
+        console.log('Generating Windows 80mm PDF using:', browserBin);
+        exec(generatePdfCmd, (err) => {
           if (err) {
-            console.warn('Win32 direct print error:', err.message);
-            const fallbackCmd = printerName
-              ? `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer -Name '${printerName}'"`
-              : `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer"`;
-            exec(fallbackCmd, (fbErr) => {
-              if (fbErr) console.warn('Win32 PowerShell fallback warn:', fbErr.message);
-            });
-          } else {
-            console.log('✅ Ticket imprimé silencieusement sous Windows sur:', printerName || 'Imprimante par défaut');
+            console.warn('Win32 PDF generation failed:', err.message);
+            return;
           }
+          console.log('PDF 80mm créé avec succès:', pdfPath);
+
+          // Step 2: Send RENDERED PDF to target printer silently via --print-to-printer
+          const printerArg = printerName ? `--printer-name="${printerName}"` : '';
+          const printPdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${formattedPdfPath}"`;
+
+          console.log('Executing Windows direct PDF print:', printPdfCmd);
+          exec(printPdfCmd, (printErr) => {
+            if (printErr) {
+              console.warn('Win32 direct PDF print error:', printErr.message);
+              // Fallback via PowerShell
+              const psCmd = printerName
+                ? `powershell -Command "Start-Process -FilePath '${browserBin}' -ArgumentList '--headless=new', '--no-sandbox', '--disable-gpu', '--print-to-printer', '--printer-name=\\"${printerName}\\"', '\\"${pdfPath}\\"' -Wait"`
+                : `powershell -Command "Start-Process -FilePath '${browserBin}' -ArgumentList '--headless=new', '--no-sandbox', '--disable-gpu', '--print-to-printer', '\\"${pdfPath}\\"' -Wait"`;
+              exec(psCmd, (psErr) => {
+                if (psErr) console.warn('Win32 PowerShell fallback warn:', psErr.message);
+              });
+            } else {
+              console.log('✅ Ticket PDF imprimé proprement sous Windows sur:', printerName || 'Imprimante par défaut');
+            }
+          });
         });
       } else {
-        console.warn('Ni Chrome ni Edge n\'ont été trouvés. Tentative via PowerShell Out-Printer...');
-        const printerName = process.env.PRINTER_NAME || '';
-        const fallbackCmd = printerName
-          ? `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer -Name '${printerName}'"`
-          : `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer"`;
-        exec(fallbackCmd, (err) => {
-          if (err) console.warn('Win32 PowerShell print error:', err.message);
-        });
+        console.warn('Ni Chrome ni Edge n\'ont été trouvés sous Windows.');
       }
     }
 
