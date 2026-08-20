@@ -84,6 +84,23 @@ export const triggerPrint = (invoiceData) => {
         </div>`).join('')
     : '';
 
+  let clientNameStr = invoiceData.clientName || '';
+  let clientPhoneStr = invoiceData.clientPhone || '';
+
+  if (!clientPhoneStr && clientNameStr.includes('(') && clientNameStr.includes(')')) {
+    const match = clientNameStr.match(/^(.+?)\s*\((.+?)\)$/);
+    if (match) {
+      clientNameStr = match[1].trim();
+      clientPhoneStr = match[2].trim();
+    }
+  } else if (!clientPhoneStr && /^[0-9+\s-]+$/.test(clientNameStr.trim())) {
+    clientPhoneStr = clientNameStr.trim();
+    clientNameStr = '';
+  }
+
+  const hasName = clientNameStr && clientNameStr !== 'Client de passage';
+  const hasPhone = Boolean(clientPhoneStr);
+
   const printHTML = isZ ? `
     <div style="text-align:center;margin-bottom:8px;">
       <h2 style="margin:0;font-size:18pt;letter-spacing:2px;">JOEL SHOP</h2>
@@ -119,11 +136,10 @@ export const triggerPrint = (invoiceData) => {
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Date:</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Caissière:</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
-      ${(invoiceData.clientName && invoiceData.clientName !== 'Client de passage') ? `
-      <div style="margin:3px 0 1px 0;"><span style="color:#555;">Nom client:</span></div>
-      <div style="margin:0 0 3px 0;font-weight:bold;word-break:break-all;">${invoiceData.clientName}</div>` : ''}
-      ${(invoiceData.clientPhone) ? `
-      <div style="margin:2px 0;"><span style="color:#555;">Tél:</span> <b>${invoiceData.clientPhone}</b></div>` : ''}
+      ${hasName ? `
+      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Nom client:</span><b>${clientNameStr}</b></div>` : ''}
+      ${hasPhone ? `
+      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Tél client:</span><b>${clientPhoneStr}</b></div>` : ''}
     </div>
     <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
     ${itemsRows}
@@ -220,7 +236,8 @@ export const triggerProformaPrint = (reservation) => {
     <div style="font-size:11pt;">
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>N° Réservation:</span><b>${reservation.reservationNo}</b></div>
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Date:</span><span>${new Date(reservation.createdAt).toLocaleString('fr-FR')}</span></div>
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Client:</span><span>${reservation.clientName}${reservation.clientPhone ? ` (${reservation.clientPhone})` : ''}</span></div>
+      ${reservation.clientName ? `<div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Nom client:</span><b>${reservation.clientName}</b></div>` : ''}
+      ${reservation.clientPhone ? `<div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Tél client:</span><b>${reservation.clientPhone}</b></div>` : ''}
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Enregistré par:</span><span>${reservation.createdBy?.name || 'Caissière'}</span></div>
       <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Statut:</span><b>${reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'}</b></div>
     </div>
