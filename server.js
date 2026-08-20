@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs/promises';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { prisma } from './db.js';
@@ -1504,7 +1505,7 @@ app.post('/api/print', async (req, res) => {
       ].filter(Boolean);
 
       let browserBin = candidateBrowsers.find(p => {
-        try { require('fs').accessSync(p); return true; } catch { return false; }
+        try { return existsSync(p); } catch { return false; }
       });
 
       if (!browserBin) {
