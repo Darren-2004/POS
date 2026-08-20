@@ -108,25 +108,30 @@ export const triggerPrint = (invoiceData) => {
       <p style="text-align:center;margin-top:16px;font-size:11pt;font-weight:bold;">--- FIN DU RAPPORT Z ---</p>
     </div>
   ` : `
-    <div style="text-align:center;margin-bottom:8px;">
-      <h2 style="margin:0;font-size:20pt;font-weight:bold;letter-spacing:3px;">JOEL SHOP</h2>
-      <p style="margin:2px 0;font-size:11pt;letter-spacing:1px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
+    <div style="text-align:center;margin-bottom:6px;">
+      <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
+      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
     </div>
-    <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
-    <div style="font-size:11pt;">
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>N° Ticket:</span><b style="font-size:11pt;">${invoiceData.invoiceNumber}</b></div>
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Date:</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Caissière:</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Client:</span><span>${invoiceData.clientName || 'Client de passage'}</span></div>
-      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:3px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
+    <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
+    <div style="font-size:9pt;">
+      <div style="margin:2px 0;"><span style="color:#555;">N° Ticket:</span></div>
+      <div style="margin:0 0 4px 0;font-weight:bold;font-size:9pt;word-break:break-all;">${invoiceData.invoiceNumber}</div>
+      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Date:</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
+      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Caissière:</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
+      <div style="display:flex;justify-content:space-between;white-space:nowrap;margin:2px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
+      ${(invoiceData.clientName && invoiceData.clientName !== 'Client de passage') ? `
+      <div style="margin:3px 0 1px 0;"><span style="color:#555;">Nom client:</span></div>
+      <div style="margin:0 0 3px 0;font-weight:bold;word-break:break-all;">${invoiceData.clientName}</div>` : ''}
+      ${(invoiceData.clientPhone) ? `
+      <div style="margin:2px 0;"><span style="color:#555;">Tél:</span> <b>${invoiceData.clientPhone}</b></div>` : ''}
     </div>
-    <p style="margin:6px 0;border-bottom:1.5px dashed #000;"></p>
+    <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
     ${itemsRows}
-    <p style="margin:6px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
-    <div style="font-size:13.5pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;white-space:nowrap;margin-top:6px;">
+    <p style="margin:5px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
+    <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;white-space:nowrap;margin-top:5px;">
       <span>TOTAL À PAYER:</span><span>${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
     </div>
-    <p style="text-align:center;margin-top:18px;font-size:11pt;font-weight:bold;">Merci de votre visite !<br>À bientôt chez JOEL SHOP</p>
+    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !<br>À bientôt chez JOEL SHOP</p>
   `;
 
   const fullHtml = `<!DOCTYPE html>
@@ -137,19 +142,19 @@ export const triggerPrint = (invoiceData) => {
           @page { size: 80mm 300mm; margin: 0mm; }
           * { box-sizing: border-box; }
           html, body {
-            width: 76mm;
+            width: 72mm;
             margin: 0 auto;
-            padding: 2mm 1mm;
+            padding: 2mm 2mm;
             font-family: 'Courier New', Courier, monospace;
-            font-size: 11pt;
+            font-size: 9pt;
             font-weight: bold;
             color: #000;
             background: #fff;
             -webkit-print-color-adjust: exact;
           }
-          table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 10.5pt; }
-          th { padding: 3px 1px; font-weight: bold; border-bottom: 2px solid #000; white-space: nowrap; }
-          td { padding: 3px 1px; white-space: nowrap; }
+          table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: 8.5pt; }
+          th { padding: 2px 1px; font-weight: bold; border-bottom: 2px solid #000; white-space: nowrap; }
+          td { padding: 2px 1px; white-space: nowrap; }
         </style>
       </head>
       <body>${printHTML}</body>
