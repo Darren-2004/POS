@@ -1482,46 +1482,67 @@ app.post('/api/print', async (req, res) => {
 
     } else if (process.platform === 'win32') {
       const localAppData = process.env.LOCALAPPDATA || '';
-      const chromePaths = [
+      const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+      const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+
+      const candidateBrowsers = [
+        process.env.CHROME_BIN,
+        path.join(programFiles, 'Google\\Chrome\\Application\\chrome.exe'),
+        path.join(programFilesX86, 'Google\\Chrome\\Application\\chrome.exe'),
+        path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'),
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe')
-      ];
-      let chromeBin = process.env.CHROME_BIN || null;
-      if (!chromeBin) {
-        chromeBin = chromePaths.find(p => {
-          try { require('fs').accessSync(p); return true; } catch { return false; }
-        });
+        // Edge is built into 100% of Windows 10/11 PCs and supports --print-to-printer identically
+        path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
+        path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+      ].filter(Boolean);
+
+      let browserBin = candidateBrowsers.find(p => {
+        try { require('fs').accessSync(p); return true; } catch { return false; }
+      });
+
+      if (!browserBin) {
+        const { execSync } = await import('child_process');
+        for (const cmd of ['where chrome 2>NUL', 'where msedge 2>NUL']) {
+          try {
+            const found = execSync(cmd).toString().split(/[\r\n]+/)[0].trim();
+            if (found && found.endsWith('.exe')) { browserBin = found; break; }
+          } catch { /* ignore */ }
+        }
       }
 
-      if (chromeBin) {
+      if (browserBin) {
         const printerName = process.env.PRINTER_NAME || '';
         const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
         
-        // Use Chrome's native --print-to-printer flag for 100% silent direct printing on Windows
+        // Native silent printing via Chromium engine (Chrome or Edge)
         const printerArg = printerName ? `--printer-name="${printerName}"` : '';
-        const chromeCmd = `"${chromeBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
+        const printCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-printer ${printerArg} "file:///${formattedHtmlPath}"`;
 
-        console.log('Executing Windows Chrome direct print:', chromeCmd);
-        exec(chromeCmd, (err, stdout, stderr) => {
+        console.log('Executing Windows direct print using:', browserBin);
+        exec(printCmd, (err) => {
           if (err) {
-            console.warn('Win32 Chrome direct print error:', err.message);
-            // Fallback: PowerShell raw print
+            console.warn('Win32 direct print error:', err.message);
             const fallbackCmd = printerName
-              ? `powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`
-              : `powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`;
+              ? `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer -Name '${printerName}'"`
+              : `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer"`;
             exec(fallbackCmd, (fbErr) => {
-              if (fbErr) console.warn('Win32 fallback print warn:', fbErr.message);
+              if (fbErr) console.warn('Win32 PowerShell fallback warn:', fbErr.message);
             });
           } else {
-            console.log('✅ Ticket imprimé directement sous Windows sur:', printerName || 'Imprimante par défaut');
+            console.log('✅ Ticket imprimé silencieusement sous Windows sur:', printerName || 'Imprimante par défaut');
           }
         });
       } else {
-        console.warn('Chrome non trouvé sur le système Windows. Veuillez installer Google Chrome.');
-        // Fallback si Chrome introuvable
-        exec(`powershell -Command "Start-Process -FilePath '${htmlPath}' -Verb Print"`, (err) => {
-          if (err) console.warn('Win32 HTML print warn:', err.message);
+        console.warn('Ni Chrome ni Edge n\'ont été trouvés. Tentative via PowerShell Out-Printer...');
+        const printerName = process.env.PRINTER_NAME || '';
+        const fallbackCmd = printerName
+          ? `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer -Name '${printerName}'"`
+          : `powershell -Command "Get-Content -Path '${htmlPath}' | Out-Printer"`;
+        exec(fallbackCmd, (err) => {
+          if (err) console.warn('Win32 PowerShell print error:', err.message);
         });
       }
     }
