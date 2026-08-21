@@ -16,7 +16,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1379,6 +1380,375 @@ app.get('/api/stats', async (req, res) => {
 // -------------------------------------------------------------
 // SERVIR L'APPLICATION FRONTEND STATIQUE
 // -------------------------------------------------------------
+// -------------------------------------------------------------
+// ESC/POS Direct Print Helpers
+// -------------------------------------------------------------
+
+function formatRow(col1, col2, col3, col4, width = 48) {
+  const w1 = 19;
+  const w2 = 5;
+  const w3 = 10;
+  const w4 = 12;
+  
+  const s2 = String(col2).slice(0, w2).padStart(w2);
+  const s3 = String(col3).slice(0, w3).padStart(w3);
+  
+  let s4 = String(col4);
+  let totalOnNextLine = false;
+  if (s4.length > w4 && col2 !== 'Qté') {
+    totalOnNextLine = true;
+  }
+  const s4_padded = totalOnNextLine ? '' : s4.padStart(w4);
+  
+  let c1 = String(col1);
+  const lines = [];
+  while (c1.length > w1) {
+    lines.push(c1.substring(0, w1));
+    c1 = c1.substring(w1);
+  }
+  lines.push(c1.padEnd(w1));
+  
+  let result = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (i === 0) {
+      if (col2 === 'Qté' && col3 === 'P/U') {
+        result += lines[i] + s2 + ' ' + s3 + ' ' + s4_padded;
+      } else {
+        result += lines[i] + s2 + '|' + s3 + '|' + s4_padded;
+      }
+    } else {
+      result += '\n' + lines[i] + ' '.repeat(w2 + 1 + w3 + 1 + (totalOnNextLine ? 0 : w4));
+    }
+  }
+  
+  if (totalOnNextLine) {
+    result += '\n' + ' '.repeat(width - s4.length) + s4;
+  }
+  
+  return result;
+}
+
+function formatKeyValuePair(key, value, width = 48) {
+  const keyStr = String(key);
+  const valStr = String(value);
+  const totalLength = keyStr.length + valStr.length;
+
+  // Both fit on one line
+  if (totalLength < width) {
+    const spaces = width - totalLength;
+    return keyStr + ' '.repeat(spaces) + valStr;
+  }
+
+  // Value alone fits on a right-aligned line
+  if (valStr.length <= width) {
+    return keyStr + '\n' + valStr.padStart(width);
+  }
+
+  // Value is longer than the full width — chunk it across multiple lines
+  const chunks = [];
+  let remaining = valStr;
+  while (remaining.length > 0) {
+    chunks.push(remaining.substring(0, width));
+    remaining = remaining.substring(width);
+  }
+  return keyStr + '\n' + chunks.map(c => c.padStart(width)).join('\n');
+}
+
+function formatEscPosInvoice(invoiceData, printer) {
+  const groupItems = (items = []) => {
+    const map = {};
+    items.forEach(item => {
+      const key = `${item.categoryName}||${item.price}`;
+      if (!map[key]) map[key] = { categoryName: item.categoryName, price: item.price, qty: 0 };
+      map[key].qty += 1;
+    });
+    return Object.values(map);
+  };
+
+  const getPaymentMethodLabel = (method) => {
+    if (method === 'CASH') return 'Espèces';
+    if (method === 'ONLINE') return 'Mobile Money';
+    if (method === 'ORANGE_MONEY') return 'Orange Money';
+    return 'Non précisé';
+  };
+
+  printer
+    .align('center')
+    .size(2, 2)
+    .text('JOEL SHOP')
+    .size(1, 1)
+    .text('─── TICKET DE CAISSE ───')
+    .text(' ')
+    .align('left');
+
+  printer.text(formatKeyValuePair('N° Ticket:', invoiceData.invoiceNumber));
+  printer.text(formatKeyValuePair('Date:', new Date(invoiceData.createdAt).toLocaleString('fr-FR')));
+  printer.text(formatKeyValuePair('Caissière:', invoiceData.createdBy?.name || 'Caissière'));
+  printer.text(formatKeyValuePair('Règlement:', getPaymentMethodLabel(invoiceData.paymentMethod)));
+
+  let clientNameStr = invoiceData.clientName || '';
+  let clientPhoneStr = invoiceData.clientPhone || '';
+
+  if (!clientPhoneStr && clientNameStr.includes('(') && clientNameStr.includes(')')) {
+    const match = clientNameStr.match(/^(.+?)\s*\((.+?)\)$/);
+    if (match) {
+      clientNameStr = match[1].trim();
+      clientPhoneStr = match[2].trim();
+    }
+  } else if (!clientPhoneStr && /^[0-9+\s-]+$/.test(clientNameStr.trim())) {
+    clientPhoneStr = clientNameStr.trim();
+    clientNameStr = '';
+  }
+
+  if (clientNameStr && clientNameStr !== 'Client de passage') {
+    printer.text(formatKeyValuePair('Nom client:', clientNameStr));
+  }
+  if (clientPhoneStr) {
+    printer.text(formatKeyValuePair('Tél client:', clientPhoneStr));
+  }
+
+  printer.text('-'.repeat(48));
+  printer.text(formatRow('Désignation', 'Qté', 'P/U', 'Total'));
+  printer.text('-'.repeat(48));
+
+  const items = groupItems(invoiceData.items);
+  items.forEach(item => {
+    const priceStr = Math.round(item.price).toLocaleString('fr-FR');
+    const totalStr = Math.round(item.price * item.qty).toLocaleString('fr-FR');
+    printer.text(formatRow(item.categoryName, item.qty, priceStr, totalStr));
+  });
+
+  printer.text('='.repeat(48));
+  
+  printer
+    .bold(true)
+    .text(formatKeyValuePair('TOTAL À PAYER:', `${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA`))
+    .bold(false);
+
+  printer
+    .align('center')
+    .text(' ')
+    .text('Merci de votre visite !')
+    .text('Fait par © TriSpark Digital')
+    .feed(3)
+    .cut()
+    .cashdraw(2);
+}
+
+function formatEscPosReservation(reservation, printer) {
+  const getPaymentMethodLabel = (method) => {
+    if (method === 'CASH') return 'Espèces';
+    if (method === 'ONLINE') return 'Mobile Money';
+    if (method === 'ORANGE_MONEY') return 'Orange Money';
+    return 'Non précisé';
+  };
+
+  printer
+    .align('center')
+    .size(2, 2)
+    .text('JOEL SHOP')
+    .size(1, 1)
+    .text('─── REÇU PROFORMA (RÉSERVATION) ───')
+    .text(' ')
+    .align('left');
+
+  printer.text(formatKeyValuePair('N° Réservation:', reservation.reservationNo));
+  printer.text(formatKeyValuePair('Date:', new Date(reservation.createdAt).toLocaleString('fr-FR')));
+  if (reservation.clientName) {
+    printer.text(formatKeyValuePair('Nom client:', reservation.clientName));
+  }
+  if (reservation.clientPhone) {
+    printer.text(formatKeyValuePair('Tél client:', reservation.clientPhone));
+  }
+  printer.text(formatKeyValuePair('Enregistré par:', reservation.createdBy?.name || 'Caissière'));
+  printer.text(formatKeyValuePair('Statut:', reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'));
+
+  printer.text('-'.repeat(48));
+  printer.text(formatRow('Désignation', 'Qté', 'P/U', 'Total'));
+  printer.text('-'.repeat(48));
+
+  const items = reservation.items || [];
+  items.forEach(item => {
+    const qty = item.qty || 1;
+    const priceStr = Math.round(item.price).toLocaleString('fr-FR');
+    const totalStr = Math.round(item.price * qty).toLocaleString('fr-FR');
+    printer.text(formatRow(item.categoryName, qty, priceStr, totalStr));
+  });
+
+  printer.text('='.repeat(48));
+  printer
+    .bold(true)
+    .text(formatKeyValuePair('MONTANT TOTAL:', `${Math.round(reservation.totalAmount).toLocaleString('fr-FR')} FCFA`))
+    .bold(false);
+
+  printer.text('-'.repeat(48));
+  printer.text('HISTORIQUE DES VERSEMENTS:');
+
+  const payments = reservation.payments || [];
+  payments.forEach((p, idx) => {
+    const label = `Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):`;
+    const val = `${Math.round(p.amount).toLocaleString('fr-FR')} FCFA`;
+    printer.text(formatKeyValuePair(label, val));
+  });
+
+  const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const remaining = Math.max(0, (Number(reservation.totalAmount) || 0) - totalPaid);
+
+  printer.text('-'.repeat(48));
+  printer.text(formatKeyValuePair('TOTAL DÉJÀ PAYÉ:', `${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA`));
+  printer
+    .bold(true)
+    .text(formatKeyValuePair('RESTE À PAYER:', `${Math.round(remaining).toLocaleString('fr-FR')} FCFA`))
+    .bold(false);
+
+  printer
+    .align('center')
+    .text(' ')
+    .text('Document Proforma de Réservation.')
+    .text('La facture définitive est remise après solde complet.')
+    .text('Merci pour votre confiance - JOEL SHOP')
+    .text('Fait par © TriSpark Digital')
+    .feed(3)
+    .cut();
+}
+
+function formatEscPosZReport(invoiceData, printer) {
+  const zr = invoiceData.zReport;
+  
+  printer
+    .align('center')
+    .size(2, 2)
+    .text('JOEL SHOP')
+    .size(1, 1)
+    .text('RAPPORT DE CLÔTURE (Z)')
+    .text(' ')
+    .align('left');
+
+  printer.text(formatKeyValuePair('Date:', `${zr.date} ${zr.time}`));
+  printer.text(formatKeyValuePair('Opérateur:', invoiceData.createdBy?.name || 'Admin'));
+  printer.text('-'.repeat(48));
+
+  printer
+    .bold(true)
+    .text('SYNTHÈSE COMPTABLE')
+    .text(formatKeyValuePair('TOTAL NET:', `${Math.round(zr.totalSales).toLocaleString('fr-FR')} FCFA`))
+    .bold(false);
+
+  printer.text('-'.repeat(48));
+  printer.text(formatKeyValuePair('Espèces:', `${Math.round(zr.totalCash || zr.payments?.CASH || 0).toLocaleString('fr-FR')} FCFA`));
+  printer.text(formatKeyValuePair('Mobile Money:', `${Math.round(zr.totalOnline || zr.payments?.ONLINE || 0).toLocaleString('fr-FR')} FCFA`));
+  printer.text(formatKeyValuePair('Orange Money:', `${Math.round(zr.payments?.ORANGE_MONEY || 0).toLocaleString('fr-FR')} FCFA`));
+  printer.text(formatKeyValuePair('Ventes Validées:', zr.validatedCount));
+  printer.text(formatKeyValuePair('Ventes Annulées:', zr.cancelledCount));
+
+  printer.text('-'.repeat(48));
+  printer.bold(true).text('RÉPARTITION PAR CATÉGORIE').bold(false);
+
+  const topSelling = zr.topSelling || [];
+  topSelling.forEach(cat => {
+    const label = `${cat.name} (x${cat.quantity})`;
+    const val = `${Math.round(cat.revenue).toLocaleString('fr-FR')} FCFA`;
+    printer.text(formatKeyValuePair(label, val));
+  });
+
+  printer
+    .align('center')
+    .text(' ')
+    .text('--- FIN DU RAPPORT Z ---')
+    .feed(3)
+    .cut();
+}
+
+async function printEscPosDirect(body) {
+  const connectionType = (process.env.PRINTER_CONNECTION || '').toLowerCase().trim();
+  if (connectionType !== 'usb' && connectionType !== 'network') {
+    return false; // Skip direct print, use PDF fallback
+  }
+
+  // Load modules dynamically
+  let escposCore, escposUsb, escposNetwork;
+  try {
+    escposCore = await import('@node-escpos/core');
+    if (connectionType === 'usb') {
+      escposUsb = await import('@node-escpos/usb-adapter');
+    } else {
+      escposNetwork = await import('@node-escpos/network-adapter');
+    }
+  } catch (err) {
+    console.error("❌ Failed to load ESC/POS adapters dynamically:", err.message);
+    return false;
+  }
+
+  const { invoiceData, reservation } = body;
+  if (!invoiceData && !reservation) {
+    console.warn("⚠️ No structured invoiceData or reservation in request body, skipping direct ESC/POS print.");
+    return false;
+  }
+
+  // Determine the device
+  let device;
+  try {
+    if (connectionType === 'usb') {
+      const USB = escposUsb.default || escposUsb.USB || escposUsb;
+      // Parse VID and PID
+      const vid = parseInt(process.env.PRINTER_USB_VID || '0x04b8', 16);
+      const pid = parseInt(process.env.PRINTER_USB_PID || '0x0e15', 16);
+      console.log(`🔌 Connecting to ESC/POS printer via USB (VID: 0x${vid.toString(16)}, PID: 0x${pid.toString(16)})...`);
+      device = new USB(vid, pid);
+    } else {
+      const Network = escposNetwork.default || escposNetwork.Network || escposNetwork;
+      const ip = (process.env.PRINTER_IP || '192.168.1.100').trim();
+      const port = parseInt(process.env.PRINTER_PORT || '9100', 10);
+      console.log(`🔌 Connecting to ESC/POS printer via Network (${ip}:${port})...`);
+      device = new Network(ip, port);
+    }
+  } catch (err) {
+    console.error("❌ Failed to initialize ESC/POS device:", err.message);
+    return false;
+  }
+
+  // Open the device, write, and close
+  return new Promise((resolve) => {
+    device.open(async (err) => {
+      if (err) {
+        console.error("❌ Failed to open ESC/POS device:", err.message);
+        return resolve(false);
+      }
+
+      try {
+        const Printer = escposCore.default?.Printer || escposCore.Printer;
+        const printer = new Printer({ encoding: "CP850" });
+
+        if (invoiceData) {
+          if (invoiceData.isZReport) {
+            formatEscPosZReport(invoiceData, printer);
+          } else {
+            formatEscPosInvoice(invoiceData, printer);
+          }
+        } else if (reservation) {
+          formatEscPosReservation(reservation, printer);
+        }
+
+        const buffer = printer.toBuffer();
+        device.write(buffer, (writeErr) => {
+          if (writeErr) {
+            console.error("❌ Failed to write to ESC/POS device:", writeErr.message);
+            device.close(() => resolve(false));
+          } else {
+            console.log("✅ Successfully sent raw ESC/POS commands to printer.");
+            device.close(() => resolve(true));
+          }
+        });
+      } catch (printErr) {
+        console.error("❌ Error printing ESC/POS commands:", printErr);
+        device.close(() => {
+          resolve(false);
+        });
+      }
+    });
+  });
+}
+
 // Endpoint de réception des jobs d'impression (demo)
 app.post('/api/print', async (req, res) => {
   try {
@@ -1388,6 +1758,16 @@ app.post('/api/print', async (req, res) => {
       return res.json({ ok: true, message: 'Print request throttled' });
     }
     lastServerPrintTimestamp = now;
+
+    // Try direct ESC/POS raw print if configured
+    try {
+      const printedDirectly = await printEscPosDirect(req.body);
+      if (printedDirectly) {
+        return res.json({ ok: true, message: 'Printed directly via ESC/POS' });
+      }
+    } catch (escPosErr) {
+      console.warn("⚠️ ESC/POS printing failed, falling back to PDF/Spooler method:", escPosErr.message);
+    }
 
     const { html } = req.body || {};
     if (!html) return res.status(400).json({ error: 'No html provided' });
@@ -1459,15 +1839,15 @@ app.post('/api/print', async (req, res) => {
             console.log(`🖨️ [LINUX RÉSEAU] Envoi vers ${printerIp}:${printerPort} ...`);
             if (printerName) {
               // IPP avec nom de file spécifique : ipp://IP:PORT/printers/NOM
-              lpCmd = `lp -h "${printerIp}:${printerPort}" -d "${printerName}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+              lpCmd = `lp -h "${printerIp}:${printerPort}" -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
             } else {
               // IPP direct sur l'imprimante par défaut exposée par l'hôte distant
-              lpCmd = `lp -h "${printerIp}:${printerPort}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+              lpCmd = `lp -h "${printerIp}:${printerPort}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
             }
           } else if (printerName) {
             // ── IMPRESSION CUPS LOCAL (PRINTER_NAME défini dans .env) ──
             console.log(`🖨️ [LINUX CUPS] Envoi vers la file CUPS : ${printerName} ...`);
-            lpCmd = `lp -d "${printerName}" -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+            lpCmd = `lp -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
           } else {
             // ── IMPRIMANTE PAR DÉFAUT CUPS (aucune config) ──
             console.log(`🖨️ [LINUX] Envoi vers l'imprimante CUPS par défaut ...`);
@@ -1608,7 +1988,10 @@ app.post('/api/print', async (req, res) => {
 
           // Méthode N°1 : Bibliothèque officielle pdf-to-printer (Moteur SumatraPDF d'impression directe sous Windows)
           console.log(`▶️ Execution Méthode N°1 (pdf-to-printer / SumatraPDF)...`);
-          const ptpOptions = effectivePrinterName ? { printer: effectivePrinterName } : {};
+          const ptpOptions = {
+            ...(effectivePrinterName ? { printer: effectivePrinterName } : {}),
+            win32: ['-print-settings "noscale"']
+          };
 
           try {
             await ptp.print(pdfPath, ptpOptions);

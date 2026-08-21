@@ -55,38 +55,39 @@ export const triggerPrint = (invoiceData) => {
 
   const itemsRows = !isZ
     ? `
-      <table style="width:100%;border-collapse:collapse;margin:4px 0;font-size:8.5pt;table-layout:fixed;">
-        <colgroup>
-          <col style="width:44%;">
-          <col style="width:14%;">
-          <col style="width:21%;">
-          <col style="width:21%;">
-        </colgroup>
-        <thead>
-          <tr style="border-bottom:1.5px solid #000;">
-            <th style="text-align:left;padding:2px 1px;font-weight:bold;word-break:break-word;">Désignation</th>
-            <th style="text-align:center;padding:2px 1px;font-weight:bold;">Qté</th>
-            <th style="text-align:right;padding:2px 1px;font-weight:bold;">P/U</th>
-            <th style="text-align:right;padding:2px 1px;font-weight:bold;">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${groupItems(invoiceData.items).map(item => `
-          <tr>
-            <td style="padding:2px 1px;text-align:left;word-break:break-word;overflow-wrap:break-word;">${item.categoryName}</td>
-            <td style="padding:2px 1px;text-align:center;white-space:nowrap;">${item.qty}</td>
-            <td style="padding:2px 1px;text-align:right;white-space:nowrap;">${Math.round(item.price).toLocaleString('fr-FR')}</td>
-            <td style="padding:2px 1px;text-align:right;font-weight:bold;white-space:nowrap;">${Math.round(item.price * item.qty).toLocaleString('fr-FR')}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`
+      <div style="width:100%; margin:4px 0; font-size:8.5pt;">
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1.5px solid #000; padding-bottom:2px;">
+          <span style="flex:1; text-align:left;">Désignation</span>
+          <span style="width:180px; display:flex; justify-content:space-between;">
+            <span style="width:40px; text-align:center;">Qté</span>
+            <span style="width:10px; text-align:center;"></span>
+            <span style="width:60px; text-align:right;">P/U</span>
+            <span style="width:10px; text-align:center;"></span>
+            <span style="width:60px; text-align:right;">Total</span>
+          </span>
+        </div>
+        <!-- Items -->
+        ${groupItems(invoiceData.items).map(item => `
+        <div style="display:flex; justify-content:space-between; border-bottom:0.5px solid #eee; padding:3px 0; align-items:flex-start;">
+          <span style="flex:1; text-align:left; word-break:break-word; overflow-wrap:break-word; padding-right:4px;">${item.categoryName}</span>
+          <span style="width:180px; display:flex; justify-content:space-between; flex-wrap:wrap; align-items:flex-start;">
+            <span style="width:40px; text-align:center;">${item.qty}</span>
+            <span style="width:10px; text-align:center;">|</span>
+            <span style="width:60px; text-align:right;">${Math.round(item.price).toLocaleString('fr-FR')}</span>
+            <span style="width:10px; text-align:center;">|</span>
+            <span style="width:60px; text-align:right; font-weight:bold; word-break:break-all;">${Math.round(item.price * item.qty).toLocaleString('fr-FR')}</span>
+          </span>
+        </div>
+        `).join('')}
+      </div>`
     : '';
 
   const topSellingRows = isZ
     ? (zr.topSelling || []).map(cat => `
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;word-break:break-word;">
           <span style="flex:1;min-width:0;word-break:break-word;">${cat.name} (x${cat.quantity})</span>
-          <span style="white-space:nowrap;margin-left:4px;">${Math.round(cat.revenue).toLocaleString('fr-FR')} FCFA</span>
+          <span style="word-break:break-all;margin-left:4px;">${Math.round(cat.revenue).toLocaleString('fr-FR')} FCFA</span>
         </div>`).join('')
     : '';
 
@@ -131,7 +132,7 @@ export const triggerPrint = (invoiceData) => {
       <p style="text-align:center;margin-top:16px;font-size:9pt;font-weight:bold;">--- FIN DU RAPPORT Z ---</p>
     </div>
   ` : `
-    <div style="text-align:center;margin-bottom:6px;">
+    <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
       <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
     </div>
@@ -159,9 +160,10 @@ export const triggerPrint = (invoiceData) => {
     ${itemsRows}
     <p style="margin:5px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
     <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:5px;">
-      <span>TOTAL À PAYER:</span><span style="white-space:nowrap;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
+      <span>TOTAL À PAYER:</span><span style="word-break:break-all;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
     </div>
-    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !<br>À bientôt chez JOEL SHOP</p>
+    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
+    <div style="text-align:center;margin-top:8px;font-size:7.5pt;color:#000;font-weight:bold;">Fait par © TriSpark Digital</div>
   `;
 
   const fullHtml = `<!DOCTYPE html>
@@ -173,8 +175,8 @@ export const triggerPrint = (invoiceData) => {
           * { box-sizing: border-box; }
           html, body {
             width: 70mm;
-            margin: 0 auto;
-            padding: 1mm 0mm;
+            margin: 0;
+            padding: 0;
             font-family: 'Courier New', Courier, monospace;
             font-size: 9pt;
             font-weight: bold;
@@ -226,24 +228,28 @@ export const triggerProformaPrint = (reservation) => {
   const paymentsList = (reservation.payments || []).map((p, idx) => `
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;">
       <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):</span>
-      <span style="white-space:nowrap;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+      <span style="word-break:break-all;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
     </div>
   `).join('');
 
   const itemsList = (reservation.items || []).map(item => `
-    <tr>
-      <td style="padding:2px 1px;text-align:left;word-break:break-word;overflow-wrap:break-word;">${item.categoryName}</td>
-      <td style="padding:2px 1px;text-align:center;white-space:nowrap;">${item.qty || 1}</td>
-      <td style="padding:2px 1px;text-align:right;white-space:nowrap;">${Math.round(item.price).toLocaleString('fr-FR')}</td>
-      <td style="padding:2px 1px;text-align:right;font-weight:bold;white-space:nowrap;">${Math.round(item.price * (item.qty || 1)).toLocaleString('fr-FR')}</td>
-    </tr>
+    <div style="display:flex; justify-content:space-between; border-bottom:0.5px solid #eee; padding:3px 0; align-items:flex-start;">
+      <span style="flex:1; text-align:left; word-break:break-word; overflow-wrap:break-word; padding-right:4px;">${item.categoryName}</span>
+      <span style="width:180px; display:flex; justify-content:space-between; flex-wrap:wrap; align-items:flex-start;">
+        <span style="width:40px; text-align:center;">${item.qty || 1}</span>
+        <span style="width:10px; text-align:center;">|</span>
+        <span style="width:60px; text-align:right;">${Math.round(item.price).toLocaleString('fr-FR')}</span>
+        <span style="width:10px; text-align:center;">|</span>
+        <span style="width:60px; text-align:right; font-weight:bold; word-break:break-all;">${Math.round(item.price * (item.qty || 1)).toLocaleString('fr-FR')}</span>
+      </span>
+    </div>
   `).join('');
 
   const totalPaid = (reservation.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const remaining = Math.max(0, (Number(reservation.totalAmount) || 0) - totalPaid);
 
   const printHTML = `
-    <div style="text-align:center;margin-bottom:8px;">
+    <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
       <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── REÇU PROFORMA (RÉSERVATION) ───</p>
     </div>
@@ -265,37 +271,34 @@ export const triggerProformaPrint = (reservation) => {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Statut:</span><b>${reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'}</b></div>
     </div>
     <p style="margin:6px 0;border-bottom:1.5px dashed #000;"></p>
-    <table style="width:100%;border-collapse:collapse;margin:4px 0;font-size:8.5pt;table-layout:fixed;">
-      <colgroup>
-        <col style="width:44%;">
-        <col style="width:14%;">
-        <col style="width:21%;">
-        <col style="width:21%;">
-      </colgroup>
-      <thead>
-        <tr style="border-bottom:1.5px solid #000;">
-          <th style="text-align:left;padding:2px 1px;font-weight:bold;word-break:break-word;">Désignation</th>
-          <th style="text-align:center;padding:2px 1px;font-weight:bold;">Qté</th>
-          <th style="text-align:right;padding:2px 1px;font-weight:bold;">P/U</th>
-          <th style="text-align:right;padding:2px 1px;font-weight:bold;">Total</th>
-        </tr>
-      </thead>
-      <tbody>${itemsList}</tbody>
-    </table>
+    <div style="width:100%; margin:4px 0; font-size:8.5pt;">
+      <!-- Header -->
+      <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1.5px solid #000; padding-bottom:2px;">
+        <span style="flex:1; text-align:left;">Désignation</span>
+        <span style="width:180px; display:flex; justify-content:space-between;">
+          <span style="width:40px; text-align:center;">Qté</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">P/U</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">Total</span>
+        </span>
+      </div>
+      ${itemsList}
+    </div>
     <p style="margin:6px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
     <div style="font-size:9pt;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:10pt;">
-        <span>MONTANT TOTAL:</span><span style="white-space:nowrap;">${Math.round(reservation.totalAmount).toLocaleString('fr-FR')} FCFA</span>
+        <span>MONTANT TOTAL:</span><span style="word-break:break-all;">${Math.round(reservation.totalAmount).toLocaleString('fr-FR')} FCFA</span>
       </div>
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
       <div style="font-weight:bold;margin:4px 0 2px 0;">HISTORIQUE DES VERSEMENTS (${reservation.payments?.length || 0}/3):</div>
       ${paymentsList || '<div style="font-style:italic;">Aucun versement effectué</div>'}
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:10pt;">
-        <span>TOTAL DÉJÀ PAYÉ:</span><span style="white-space:nowrap;">${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
+        <span>TOTAL DÉJÀ PAYÉ:</span><span style="word-break:break-all;">${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
       </div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:11pt;margin-top:3px;">
-        <span>RESTE À PAYER:</span><span style="white-space:nowrap;">${Math.round(remaining).toLocaleString('fr-FR')} FCFA</span>
+        <span>RESTE À PAYER:</span><span style="word-break:break-all;">${Math.round(remaining).toLocaleString('fr-FR')} FCFA</span>
       </div>
     </div>
     <p style="text-align:center;margin-top:14px;font-size:8.5pt;font-weight:bold;">
@@ -303,6 +306,7 @@ export const triggerProformaPrint = (reservation) => {
       La facture définitive est remise après solde complet.<br>
       Merci pour votre confiance - JOEL SHOP
     </p>
+    <div style="text-align:center;margin-top:8px;font-size:7.5pt;color:#000;font-weight:bold;">Fait par © TriSpark Digital</div>
   `;
 
   const fullHtml = `<!DOCTYPE html>
@@ -314,8 +318,8 @@ export const triggerProformaPrint = (reservation) => {
           * { box-sizing: border-box; }
           html, body {
             width: 70mm;
-            margin: 0 auto;
-            padding: 1mm 0mm;
+            margin: 0;
+            padding: 0;
             font-family: 'Courier New', Courier, monospace;
             font-size: 9pt;
             font-weight: bold;
