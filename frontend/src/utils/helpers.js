@@ -57,10 +57,10 @@ export const triggerPrint = (invoiceData) => {
     ? `
       <table style="width:100%;border-collapse:collapse;margin:4px 0;font-size:8.5pt;table-layout:fixed;">
         <colgroup>
-          <col style="width:45%;">
-          <col style="width:15%;">
-          <col style="width:20%;">
-          <col style="width:20%;">
+          <col style="width:44%;">
+          <col style="width:14%;">
+          <col style="width:21%;">
+          <col style="width:21%;">
         </colgroup>
         <thead>
           <tr style="border-bottom:1.5px solid #000;">
@@ -137,20 +137,22 @@ export const triggerPrint = (invoiceData) => {
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
-      <div style="margin:2px 0;"><span style="color:#555;">N° Ticket:</span></div>
-      <div style="margin:0 0 4px 0;font-weight:bold;font-size:9pt;word-break:break-all;">${invoiceData.invoiceNumber}</div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
+        <span>N° Ticket:</span>
+        <span style="font-weight:bold;word-break:break-all;">${invoiceData.invoiceNumber}</span>
+      </div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Date:</span><span style="white-space:nowrap;">${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Caissière:</span><span style="word-break:break-word;">${invoiceData.createdBy?.name || 'Caissière'}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
       ${hasName ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
-        <span style="color:#555;margin-right:4px;">Nom client:</span>
-        <b style="word-break:break-word;text-align:right;flex:1;min-width:0;">${clientNameStr}</b>
+        <span>Nom client:</span>
+        <span style="font-weight:bold;word-break:break-word;text-align:right;flex:1;min-width:0;">${clientNameStr}</span>
       </div>` : ''}
       ${hasPhone ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
-        <span style="color:#555;margin-right:4px;">Tél client:</span>
-        <b style="word-break:break-all;text-align:right;">${clientPhoneStr}</b>
+        <span>Tél client:</span>
+        <span style="font-weight:bold;word-break:break-all;text-align:right;">${clientPhoneStr}</span>
       </div>` : ''}
     </div>
     <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
@@ -170,9 +172,9 @@ export const triggerPrint = (invoiceData) => {
           @page { size: 80mm 300mm; margin: 0mm; }
           * { box-sizing: border-box; }
           html, body {
-            width: 72mm;
+            width: 70mm;
             margin: 0 auto;
-            padding: 1mm 1mm;
+            padding: 1mm 0mm;
             font-family: 'Courier New', Courier, monospace;
             font-size: 9pt;
             font-weight: bold;
@@ -247,17 +249,17 @@ export const triggerProformaPrint = (reservation) => {
     </div>
     <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>N° Réservation:</span><b style="word-break:break-all;">${reservation.reservationNo}</b></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>N° Réservation:</span><span style="font-weight:bold;word-break:break-all;">${reservation.reservationNo}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Date:</span><span style="white-space:nowrap;">${new Date(reservation.createdAt).toLocaleString('fr-FR')}</span></div>
       ${reservation.clientName ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;">
-        <span style="color:#555;margin-right:4px;">Nom client:</span>
-        <b style="word-break:break-word;text-align:right;flex:1;min-width:0;">${reservation.clientName}</b>
+        <span>Nom client:</span>
+        <span style="font-weight:bold;word-break:break-word;text-align:right;flex:1;min-width:0;">${reservation.clientName}</span>
       </div>` : ''}
       ${reservation.clientPhone ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;">
-        <span style="color:#555;margin-right:4px;">Tél client:</span>
-        <b style="word-break:break-all;text-align:right;">${reservation.clientPhone}</b>
+        <span>Tél client:</span>
+        <span style="font-weight:bold;word-break:break-all;text-align:right;">${reservation.clientPhone}</span>
       </div>` : ''}
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Enregistré par:</span><span style="word-break:break-word;">${reservation.createdBy?.name || 'Caissière'}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Statut:</span><b>${reservation.status === 'COMPLETED' ? 'PAYÉE À 100%' : 'EN COURS DE PAIEMENT'}</b></div>
@@ -265,10 +267,10 @@ export const triggerProformaPrint = (reservation) => {
     <p style="margin:6px 0;border-bottom:1.5px dashed #000;"></p>
     <table style="width:100%;border-collapse:collapse;margin:4px 0;font-size:8.5pt;table-layout:fixed;">
       <colgroup>
-        <col style="width:45%;">
-        <col style="width:15%;">
-        <col style="width:20%;">
-        <col style="width:20%;">
+        <col style="width:44%;">
+        <col style="width:14%;">
+        <col style="width:21%;">
+        <col style="width:21%;">
       </colgroup>
       <thead>
         <tr style="border-bottom:1.5px solid #000;">
@@ -298,7 +300,7 @@ export const triggerProformaPrint = (reservation) => {
     </div>
     <p style="text-align:center;margin-top:14px;font-size:8.5pt;font-weight:bold;">
       Document Proforma de Réservation.<br>
-      La facture definitiva est remise après solde complet.<br>
+      La facture définitive est remise après solde complet.<br>
       Merci pour votre confiance - JOEL SHOP
     </p>
   `;
@@ -311,9 +313,9 @@ export const triggerProformaPrint = (reservation) => {
           @page { size: 80mm 300mm; margin: 0mm; }
           * { box-sizing: border-box; }
           html, body {
-            width: 72mm;
+            width: 70mm;
             margin: 0 auto;
-            padding: 1mm 1mm;
+            padding: 1mm 0mm;
             font-family: 'Courier New', Courier, monospace;
             font-size: 9pt;
             font-weight: bold;
