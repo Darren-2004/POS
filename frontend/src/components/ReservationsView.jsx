@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight } from 'lucide-react';
 import Field, { inputCls } from './Field';
-import { formatFCFA, triggerPrint, triggerProformaPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
+import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
 export default function ReservationsView({ categories = [], currentUser, serverOnline }) {
@@ -76,6 +76,14 @@ export default function ReservationsView({ categories = [], currentUser, serverO
 
     const advanceNum = parseFloat(newAdvanceAmount) || 0;
     const remaining = getRemainingBalance(selectedRes);
+    const existingPaymentsCount = selectedRes.payments?.length || 0;
+
+    // Enforce that the 3rd payment MUST complete the remaining balance since max 3 payments are allowed
+    if (existingPaymentsCount === 2 && advanceNum > 0) {
+      if (Math.abs(advanceNum - remaining) > 0.01) {
+        return alert(`Il s'agit du 3ème et dernier versement possible pour cette réservation. Le montant saisi doit être exactement égal au solde restant (${formatFCFA(remaining)}).`);
+      }
+    }
 
     if (advanceNum > 0 && advanceNum > remaining + 0.01) {
       return alert(`L'avance saisie (${formatFCFA(advanceNum)}) dépasse le solde restant (${formatFCFA(remaining)})`);
@@ -106,8 +114,34 @@ export default function ReservationsView({ categories = [], currentUser, serverO
         return;
       }
 
-      // Trigger Proforma Print automatically
-      triggerProformaPrint(updatedResData);
+      // Calculate new remaining balance after this payment
+      const newTotalPaid = (updatedResData.payments || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const newRemaining = Math.max(0, (parseFloat(updatedResData.totalAmount) || 0) - newTotalPaid);
+      const isNowFullyPaid = newRemaining <= 0.01;
+
+      if (isNowFullyPaid && advanceNum > 0) {
+        // ✅ Payment is complete — auto-create & print the definitive invoice
+        try {
+          const invResponse = await fetch(`${API_BASE}/reservations/${selectedRes.id}/create-invoice`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ createdById: currentUser.id })
+          });
+          if (invResponse.ok) {
+            const invoiceData = await invResponse.json();
+            triggerFinalReservationPrint(invoiceData); // Print definitive invoice with history
+          } else {
+            // Fallback: print proforma with completion message
+            triggerProformaPrint(updatedResData);
+          }
+        } catch {
+          triggerProformaPrint(updatedResData);
+        }
+      } else if (advanceNum > 0) {
+        // 💰 Partial payment — print advance receipt
+        triggerProformaPrint(updatedResData);
+      }
+
       window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
 
       // Refresh list & update drawer content
@@ -137,7 +171,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       });
       if (response.ok) {
         const invoiceData = await response.json();
-        triggerPrint(invoiceData);
+        triggerFinalReservationPrint(invoiceData);
         window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
       } else {
         const err = await response.json().catch(() => ({}));
@@ -148,6 +182,13 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       alert('Erreur réseau');
     }
   };
+
+  // Determine what the main action button will do based on current state
+  const newAmountNum = parseFloat(newAdvanceAmount) || 0;
+  const currentRemaining = getRemainingBalance(selectedRes);
+  const willFinishPayment = selectedRes && newAmountNum > 0 && (currentRemaining - newAmountNum) <= 0.01;
+
+
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-white/[0.01] p-2">
@@ -499,6 +540,8 @@ export default function ReservationsView({ categories = [], currentUser, serverO
 
             {/* Drawer Bottom Actions */}
             <div className="border-t border-white/10 pt-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
+
+              {/* Reprint last receipt */}
               <button
                 type="button"
                 onClick={() => triggerProformaPrint(selectedRes)}
@@ -509,26 +552,46 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                 <span>Réimprimer Reçu</span>
               </button>
 
-              <button
-                type="button"
-                onClick={handleSaveDrawerChanges}
-                disabled={isSubmitting || !serverOnline}
-                className="flex-1 rounded-2xl bg-gold py-3 px-4 text-xs font-extrabold text-black hover:bg-gold/85 disabled:opacity-40 transition shadow-lg shadow-gold/10 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Printer className="h-4 w-4" />
-                <span>{isSubmitting ? 'Enregistrement...' : 'Enregistrer Nouveau Versement'}</span>
-              </button>
+              {/* Main action — dynamically shows what will happen */}
+              {getRemainingBalance(selectedRes) > 0.01 && (
+                <button
+                  type="button"
+                  onClick={handleSaveDrawerChanges}
+                  disabled={isSubmitting || !serverOnline}
+                  className={cx(
+                    'flex-1 rounded-2xl py-3 px-4 text-xs font-extrabold transition shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40',
+                    willFinishPayment
+                      ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
+                      : 'bg-gold hover:bg-gold/85 text-black shadow-gold/10'
+                  )}
+                >
+                  {willFinishPayment
+                    ? <CheckCircle className="h-4 w-4" />
+                    : <Printer className="h-4 w-4" />
+                  }
+                  <span>
+                    {isSubmitting
+                      ? 'Enregistrement...'
+                      : willFinishPayment
+                        ? '✅ Solder & Imprimer Facture Définitive'
+                        : '🧾 Enregistrer Acompte & Imprimer Reçu'
+                    }
+                  </span>
+                </button>
+              )}
 
+              {/* Already fully paid — reprint definitive invoice */}
               {getRemainingBalance(selectedRes) <= 0.01 && (
                 <button
                   type="button"
                   onClick={handlePrintFinalInvoice}
-                  className="rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 py-3 px-4 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  className="flex-1 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 py-3 px-4 text-xs font-bold transition flex items-center gap-1.5 justify-center cursor-pointer"
                 >
                   <CheckCircle className="h-4 w-4 text-emerald-400" />
-                  <span>Imprimer Facture Définitive</span>
+                  <span>Réimprimer Facture Définitive</span>
                 </button>
               )}
+
             </div>
 
           </div>

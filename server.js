@@ -734,7 +734,15 @@ app.post('/api/reservations/:id/create-invoice', async (req, res) => {
       });
     });
 
-    res.status(201).json(newInvoice);
+    // Attach reservation payment history so the frontend can print it on the final ticket
+    const invoiceWithHistory = {
+      ...newInvoice,
+      reservationPayments: reservation.payments,
+      sourceReservationNo: reservation.reservationNo,
+      clientPhone: reservation.clientPhone
+    };
+
+    res.status(201).json(invoiceWithHistory);
   } catch (error) {
     console.error('Create invoice from reservation error:', error);
     res.status(500).json({ error: 'Erreur lors de la création de la facture définitive' });

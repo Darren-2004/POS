@@ -358,3 +358,146 @@ export const triggerProformaPrint = (reservation) => {
       setTimeout(() => { isPrintingBusy = false; }, 2000);
     });
 };
+
+// ─── Final Definitive Invoice print (from reservation settlement) ───────────
+export const triggerFinalReservationPrint = (invoiceData) => {
+  if (isPrintingBusy) {
+    showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
+    return;
+  }
+  isPrintingBusy = true;
+
+  const payments = invoiceData.reservationPayments || [];
+  const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  const groupItems = (items = []) => {
+    const map = {};
+    items.forEach(item => {
+      const key = `${item.categoryName}||${item.price}`;
+      if (!map[key]) map[key] = { categoryName: item.categoryName, price: item.price, qty: 0 };
+      map[key].qty += 1;
+    });
+    return Object.values(map);
+  };
+
+  const itemsRows = `
+    <div style="width:100%; margin:4px 0; font-size:8.5pt;">
+      <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1.5px solid #000; padding-bottom:2px;">
+        <span style="flex:1; text-align:left;">Désignation</span>
+        <span style="width:180px; display:flex; justify-content:space-between;">
+          <span style="width:40px; text-align:center;">Qté</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">P/U</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">Total</span>
+        </span>
+      </div>
+      ${groupItems(invoiceData.items || []).map(item => `
+      <div style="display:flex; justify-content:space-between; border-bottom:0.5px solid #eee; padding:3px 0; align-items:flex-start;">
+        <span style="flex:1; text-align:left; word-break:break-word; overflow-wrap:break-word; padding-right:4px;">${item.categoryName}</span>
+        <span style="width:180px; display:flex; justify-content:space-between; flex-wrap:wrap; align-items:flex-start;">
+          <span style="width:40px; text-align:center;">${item.qty}</span>
+          <span style="width:10px; text-align:center;">|</span>
+          <span style="width:60px; text-align:right;">${Math.round(item.price).toLocaleString('fr-FR')}</span>
+          <span style="width:10px; text-align:center;">|</span>
+          <span style="width:60px; text-align:right; font-weight:bold; word-break:break-all;">${Math.round(item.price * item.qty).toLocaleString('fr-FR')}</span>
+        </span>
+      </div>
+      `).join('')}
+    </div>`;
+
+  const paymentsRows = payments.map((p, idx) => `
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;font-size:8.5pt;">
+      <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):</span>
+      <span style="font-weight:bold;word-break:break-all;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+    </div>
+  `).join('');
+
+  const printHTML = `
+    <div style="text-align:center;margin-bottom:2px;">
+      <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
+      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── FACTURE DÉFINITIVE ───</p>
+    </div>
+    <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
+    <div style="font-size:8.5pt;background:#f0f0f0;padding:4px 3px;border-radius:3px;margin-bottom:4px;text-align:center;font-weight:bold;">
+       SOLDE FINAL — Réservation N° ${invoiceData.sourceReservationNo || ''}
+    </div>
+    <div style="font-size:9pt;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
+        <span>N° Facture:</span>
+        <span style="font-weight:bold;word-break:break-all;">${invoiceData.invoiceNumber}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Date:</span><span>${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Caissière:</span><span>${invoiceData.createdBy?.name || 'Caissière'}</span></div>
+      ${invoiceData.clientName ? `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Client:</span><span style="font-weight:bold;word-break:break-word;">${invoiceData.clientName}</span></div>` : ''}
+      ${invoiceData.clientPhone ? `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Tél:</span><span style="font-weight:bold;">${invoiceData.clientPhone}</span></div>` : ''}
+    </div>
+    <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
+    ${itemsRows}
+    <p style="margin:5px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
+    <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;flex-wrap:wrap;margin-top:5px;">
+      <span>TOTAL COMMANDE:</span><span style="word-break:break-all;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
+    </div>
+    <p style="margin:6px 0;border-bottom:1.5px dashed #000;"></p>
+    <div style="font-weight:bold;margin:4px 0 2px 0;font-size:9pt;">HISTORIQUE DES VERSEMENTS (${payments.length}/3) :</div>
+    ${paymentsRows || '<div style="font-style:italic;font-size:8.5pt;">Aucun versement enregistré</div>'}
+    <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:10pt;">
+      <span>TOTAL PAYÉ:</span><span style="word-break:break-all;">${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:11pt;margin-top:3px;color:#000;">
+      <span>SOLDE RESTANT:</span><span>0 FCFA </span>
+    </div>
+    <p style="text-align:center;margin-top:12px;font-size:9pt;font-weight:bold;border:1.5px solid #000;padding:4px;">
+      RÉSERVATION ENTIÈREMENT SOLDÉE<br>Merci de votre confiance !
+    </p>
+    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
+    <div style="text-align:center;margin-top:8px;font-size:7.5pt;color:#000;font-weight:bold;">Fait par © TriSpark Digital</div>
+  `;
+
+  const fullHtml = `<!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          @page { size: 80mm 300mm; margin: 0mm; }
+          * { box-sizing: border-box; }
+          html, body {
+            width: 70mm;
+            margin: 0;
+            padding: 0;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 9pt;
+            font-weight: bold;
+            color: #000;
+            background: #fff;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            -webkit-print-color-adjust: exact;
+          }
+        </style>
+      </head>
+      <body>${printHTML}</body>
+    </html>`;
+
+  fetch('/api/print', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ html: fullHtml, invoiceData })
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        showToast("🖨️ Facture définitive envoyée à l'imprimante !", "success");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`⚠️ Problème d'impression : ${err.error || 'Imprimante non disponible'}`, "error");
+      }
+    })
+    .catch((err) => {
+      console.error('Final invoice print request failed:', err);
+      showToast("⚠️ Erreur de connexion avec le service d'impression.", "error");
+    })
+    .finally(() => {
+      setTimeout(() => { isPrintingBusy = false; }, 2000);
+    });
+};
