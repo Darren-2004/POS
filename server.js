@@ -1486,6 +1486,7 @@ function formatEscPosInvoice(invoiceData, printer) {
     .text('JOEL SHOP')
     .size(1, 1)
     .text('─── TICKET DE CAISSE ───')
+    .text('NIU: P079216781512Z')
     .text(' ')
     .align('left');
 
@@ -1557,6 +1558,7 @@ function formatEscPosReservation(reservation, printer) {
     .text('JOEL SHOP')
     .size(1, 1)
     .text('─── REÇU PROFORMA (RÉSERVATION) ───')
+    .text('NIU: P079216781512Z')
     .text(' ')
     .align('left');
 

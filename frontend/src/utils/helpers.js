@@ -135,6 +135,7 @@ export const triggerPrint = (invoiceData) => {
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
       <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
+      <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
@@ -252,6 +253,7 @@ export const triggerProformaPrint = (reservation) => {
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
       <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── REÇU PROFORMA (RÉSERVATION) ───</p>
+      <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
@@ -417,6 +419,7 @@ export const triggerFinalReservationPrint = (invoiceData) => {
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
       <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── FACTURE DÉFINITIVE ───</p>
+      <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:8.5pt;background:#f0f0f0;padding:4px 3px;border-radius:3px;margin-bottom:4px;text-align:center;font-weight:bold;">
