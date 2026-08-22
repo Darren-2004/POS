@@ -356,6 +356,94 @@ app.put('/api/categories/:id', async (req, res) => {
   }
 });
 
+// Dupliquer une catégorie avec ses sous-catégories
+app.post('/api/categories/:id/duplicate', async (req, res) => {
+  const { id } = req.params;
+  const { newName } = req.body;
+
+  if (!newName) {
+    return res.status(400).json({ error: 'Nouveau nom requis' });
+  }
+
+  try {
+    const original = await prisma.category.findUnique({
+      where: { id },
+      include: { subCategories: true }
+    });
+
+    if (!original) {
+      return res.status(404).json({ error: 'Catégorie originale non trouvée' });
+    }
+
+    const duplicated = await prisma.$transaction(async (tx) => {
+      const newCat = await tx.category.create({
+        data: {
+          name: newName.trim(),
+          color: original.color || 'bg-blue-500'
+        }
+      });
+
+      if (original.subCategories && original.subCategories.length > 0) {
+        await tx.subCategory.createMany({
+          data: original.subCategories.map(sub => ({
+            name: sub.name,
+            categoryId: newCat.id
+          }))
+        });
+      }
+
+      return await tx.category.findUnique({
+        where: { id: newCat.id },
+        include: { subCategories: true }
+      });
+    });
+
+    res.status(201).json(duplicated);
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      return res.status(400).json({ error: 'Le nom de catégorie est déjà utilisé' });
+    }
+    console.error('Duplicate category error', error);
+    res.status(500).json({ error: 'Erreur lors de la duplication' });
+  }
+});
+
+// Ajouter une sous-catégorie à plusieurs catégories
+app.post('/api/subcategories/batch', async (req, res) => {
+  const { name, categoryIds } = req.body;
+
+  if (!name || !categoryIds || !categoryIds.length) {
+    return res.status(400).json({ error: 'Nom et identifiants de catégories requis' });
+  }
+
+  try {
+    const createdSubs = await prisma.$transaction(async (tx) => {
+      const results = [];
+      for (const catId of categoryIds) {
+        // Check if a subcategory with this name already exists in this category
+        const exists = await tx.subCategory.findFirst({
+          where: { name: name.trim(), categoryId: catId }
+        });
+        if (!exists) {
+          const sub = await tx.subCategory.create({
+            data: {
+              name: name.trim(),
+              categoryId: catId
+            }
+          });
+          results.push(sub);
+        }
+      }
+      return results;
+    });
+
+    res.status(201).json({ message: `${createdSubs.length} sous-catégorie(s) créée(s)`, created: createdSubs });
+  } catch (error) {
+    console.error('Batch create subcategory error', error);
+    res.status(500).json({ error: 'Erreur lors de la création groupée' });
+  }
+});
+
 // -------------------------------------------------------------
 // SUB-CATEGORIES (SOUS-CATÉGORIES)
 // -------------------------------------------------------------
@@ -1067,6 +1155,37 @@ app.get('/api/reservation-payments', async (req, res) => {
   }
 });
 
+function getPaymentMethodBreakdown(paymentMethod, totalAmount) {
+  const res = { CASH: 0, ONLINE: 0, ORANGE_MONEY: 0 };
+  const methodStr = String(paymentMethod || '').trim();
+
+  if (methodStr.startsWith('MULTIPLE:')) {
+    const parts = methodStr.substring(9).split(';');
+    parts.forEach(part => {
+      const [key, val] = part.split('=');
+      const k = String(key || '').trim().toUpperCase();
+      const v = parseFloat(val) || 0;
+      if (k === 'CASH') {
+        res.CASH += v;
+      } else if (k === 'ONLINE' || k === 'MOBILE_MONEY' || k === 'MOMO' || k === 'WAVE') {
+        res.ONLINE += v;
+      } else if (k === 'ORANGE_MONEY' || k === 'ORANGE' || k === 'OM') {
+        res.ORANGE_MONEY += v;
+      }
+    });
+  } else {
+    const k = methodStr.toUpperCase();
+    if (k === 'ORANGE_MONEY' || k === 'ORANGE' || k === 'OM') {
+      res.ORANGE_MONEY = totalAmount;
+    } else if (k === 'ONLINE' || k === 'MOBILE_MONEY' || k === 'MOMO' || k === 'WAVE') {
+      res.ONLINE = totalAmount;
+    } else {
+      res.CASH = totalAmount;
+    }
+  }
+  return res;
+}
+
 // Rapport Z pour une date ou une période donnée (startDate & endDate)
 app.get('/api/z-report', async (req, res) => {
   const { date, startDate, endDate } = req.query;
@@ -1117,15 +1236,19 @@ app.get('/api/z-report', async (req, res) => {
       // Exclude reservation final invoices from cash summation to prevent double counting
       if (!inv.isReservation) {
         total += inv.totalAmount;
-        const m = inv.paymentMethod || 'CASH';
-        payments[m] = (payments[m] || 0) + Number(inv.totalAmount || 0);
+        const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
+        payments.CASH += breakdown.CASH;
+        payments.ONLINE += breakdown.ONLINE;
+        payments.ORANGE_MONEY += breakdown.ORANGE_MONEY;
       }
     });
 
     resPayments.forEach(p => {
       total += p.amount;
-      const m = p.paymentMethod || 'CASH';
-      payments[m] = (payments[m] || 0) + Number(p.amount || 0);
+      const breakdown = getPaymentMethodBreakdown(p.paymentMethod, p.amount);
+      payments.CASH += breakdown.CASH;
+      payments.ONLINE += breakdown.ONLINE;
+      payments.ORANGE_MONEY += breakdown.ORANGE_MONEY;
     });
 
     const itemsPeriod = await prisma.invoiceItem.findMany({
@@ -1214,34 +1337,26 @@ app.get('/api/stats', async (req, res) => {
         if (!inv.isReservation) {
           count++;
           total += inv.totalAmount;
-          const method = normalizeMethod(inv.paymentMethod);
-          if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
-            orangeMoney += inv.totalAmount;
-            directOrange += inv.totalAmount;
-          } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
-            online += inv.totalAmount;
-            directOnline += inv.totalAmount;
-          } else {
-            cash += inv.totalAmount;
-            directCash += inv.totalAmount;
-          }
+          const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
+          cash += breakdown.CASH;
+          directCash += breakdown.CASH;
+          online += breakdown.ONLINE;
+          directOnline += breakdown.ONLINE;
+          orangeMoney += breakdown.ORANGE_MONEY;
+          directOrange += breakdown.ORANGE_MONEY;
         }
       });
 
       resPayments.forEach(p => {
         reservationTotal += p.amount;
         total += p.amount;
-        const method = normalizeMethod(p.paymentMethod);
-        if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
-          orangeMoney += p.amount;
-          resOrange += p.amount;
-        } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
-          online += p.amount;
-          resOnline += p.amount;
-        } else {
-          cash += p.amount;
-          resCash += p.amount;
-        }
+        const breakdown = getPaymentMethodBreakdown(p.paymentMethod, p.amount);
+        cash += breakdown.CASH;
+        resCash += breakdown.CASH;
+        online += breakdown.ONLINE;
+        resOnline += breakdown.ONLINE;
+        orangeMoney += breakdown.ORANGE_MONEY;
+        resOrange += breakdown.ORANGE_MONEY;
       });
 
       return {
@@ -1308,33 +1423,25 @@ app.get('/api/stats', async (req, res) => {
           if (!inv.isReservation) {
             count++;
             total += inv.totalAmount;
-            const method = normalizeMethod(inv.paymentMethod);
-            if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
-              orangeMoney += inv.totalAmount;
-              directOrange += inv.totalAmount;
-            } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
-              online += inv.totalAmount;
-              directOnline += inv.totalAmount;
-            } else {
-              cash += inv.totalAmount;
-              directCash += inv.totalAmount;
-            }
+            const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
+            cash += breakdown.CASH;
+            directCash += breakdown.CASH;
+            online += breakdown.ONLINE;
+            directOnline += breakdown.ONLINE;
+            orangeMoney += breakdown.ORANGE_MONEY;
+            directOrange += breakdown.ORANGE_MONEY;
           }
         });
         allResPayments.forEach(p => {
           reservationTotal += p.amount;
           total += p.amount;
-          const method = normalizeMethod(p.paymentMethod);
-          if (method === 'ORANGE_MONEY' || method === 'ORANGE' || method === 'OM') {
-            orangeMoney += p.amount;
-            resOrange += p.amount;
-          } else if (method === 'ONLINE' || method === 'MOBILE_MONEY' || method === 'MOMO' || method === 'WAVE') {
-            online += p.amount;
-            resOnline += p.amount;
-          } else {
-            cash += p.amount;
-            resCash += p.amount;
-          }
+          const breakdown = getPaymentMethodBreakdown(p.paymentMethod, p.amount);
+          cash += breakdown.CASH;
+          resCash += breakdown.CASH;
+          online += breakdown.ONLINE;
+          resOnline += breakdown.ONLINE;
+          orangeMoney += breakdown.ORANGE_MONEY;
+          resOrange += breakdown.ORANGE_MONEY;
         });
         return {
           total, cash, online, orangeMoney, count, reservationTotal,
@@ -1474,6 +1581,22 @@ function formatEscPosInvoice(invoiceData, printer) {
   };
 
   const getPaymentMethodLabel = (method) => {
+    const methodStr = String(method || '').trim();
+    if (methodStr.startsWith('MULTIPLE:')) {
+      const parts = methodStr.substring(9).split(';');
+      const labels = parts.map(part => {
+        const [key, val] = part.split('=');
+        const k = String(key || '').trim().toUpperCase();
+        const v = parseFloat(val) || 0;
+        let label = '';
+        if (k === 'CASH') label = 'Espèces';
+        else if (k === 'ONLINE') label = 'Mobile Money';
+        else if (k === 'ORANGE_MONEY') label = 'Orange Money';
+        else label = k;
+        return `${label}: ${new Intl.NumberFormat('fr-FR').format(v)} FCFA`;
+      });
+      return labels.join(', ');
+    }
     if (method === 'CASH') return 'Espèces';
     if (method === 'ONLINE') return 'Mobile Money';
     if (method === 'ORANGE_MONEY') return 'Orange Money';
@@ -1546,6 +1669,22 @@ function formatEscPosInvoice(invoiceData, printer) {
 
 function formatEscPosReservation(reservation, printer) {
   const getPaymentMethodLabel = (method) => {
+    const methodStr = String(method || '').trim();
+    if (methodStr.startsWith('MULTIPLE:')) {
+      const parts = methodStr.substring(9).split(';');
+      const labels = parts.map(part => {
+        const [key, val] = part.split('=');
+        const k = String(key || '').trim().toUpperCase();
+        const v = parseFloat(val) || 0;
+        let label = '';
+        if (k === 'CASH') label = 'Espèces';
+        else if (k === 'ONLINE') label = 'Mobile Money';
+        else if (k === 'ORANGE_MONEY') label = 'Orange Money';
+        else label = k;
+        return `${label}: ${new Intl.NumberFormat('fr-FR').format(v)} FCFA`;
+      });
+      return labels.join(', ');
+    }
     if (method === 'CASH') return 'Espèces';
     if (method === 'ONLINE') return 'Mobile Money';
     if (method === 'ORANGE_MONEY') return 'Orange Money';

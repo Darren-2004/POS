@@ -3,7 +3,7 @@ import IconButton from '../../components/IconButton';
 import Modal from '../../components/Modal';
 import Field, { inputCls } from '../../components/Field';
 import ConfirmModal from '../../components/ConfirmModal';
-import { Trash2, Pencil, Plus, FolderPlus, Tag, Check, X } from 'lucide-react';
+import { Trash2, Pencil, Plus, FolderPlus, Tag, Check, X, Copy, CheckSquare } from 'lucide-react';
 import { API_BASE } from '../../utils/constants';
 
 export default function Categories({ categories = [], fetchCategories }) {
@@ -22,7 +22,36 @@ export default function Categories({ categories = [], fetchCategories }) {
   const [editSubName, setEditSubName] = useState('');
   const [pendingDeleteSub, setPendingDeleteSub] = useState(null);
 
-  // --- Category CRUD ---
+  // Batch subcategory modal states
+  const [showBatchSub, setShowBatchSub] = useState(false);
+  const [batchSubName, setBatchSubName] = useState('');
+  const [batchSelectedCats, setBatchSelectedCats] = useState([]);
+
+  // --- Category CRUD & Actions ---
+  const duplicateCategory = async (catObj) => {
+    const defaultName = `${catObj.name} 2`;
+    const newName = prompt(`Entrez le nom de la nouvelle catégorie dupliquée :`, defaultName);
+    if (newName === null) return; // User cancelled
+    if (!newName.trim()) return alert('Nom requis');
+
+    try {
+      const res = await fetch(`${API_BASE}/categories/${catObj.id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName: newName.trim() })
+      });
+      if (res.ok) {
+        fetchCategories && fetchCategories();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || 'Erreur lors de la duplication');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Erreur réseau');
+    }
+  };
+
   const createCategory = async () => {
     if (!newCatName.trim()) return alert('Nom de la catégorie requis');
     try {
@@ -84,7 +113,35 @@ export default function Categories({ categories = [], fetchCategories }) {
     setPendingDeleteCat(null);
   };
 
-  // --- SubCategory CRUD ---
+  // --- SubCategory CRUD & Batch ---
+  const createBatchSubCategory = async () => {
+    if (!batchSubName.trim()) return alert('Nom de la sous-catégorie requis');
+    if (!batchSelectedCats.length) return alert('Sélectionnez au moins une catégorie parent');
+
+    try {
+      const res = await fetch(`${API_BASE}/subcategories/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: batchSubName.trim(),
+          categoryIds: batchSelectedCats
+        })
+      });
+      if (res.ok) {
+        setShowBatchSub(false);
+        setBatchSubName('');
+        setBatchSelectedCats([]);
+        fetchCategories && fetchCategories();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || 'Erreur lors de la création groupée');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Erreur réseau');
+    }
+  };
+
   const createSubCategory = async (categoryId) => {
     if (!newSubName.trim()) return alert('Nom de la sous-catégorie requis');
     try {
@@ -160,13 +217,25 @@ export default function Categories({ categories = [], fetchCategories }) {
             Gérez vos catégories principales et ajoutez des sous-catégories directement sur le même écran.
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateCat(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-gold text-black px-4 py-2 text-xs font-bold hover:bg-gold/90 transition shadow-md cursor-pointer"
-        >
-          <Plus className="h-4 w-4" />
-          Nouvelle Catégorie
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setBatchSelectedCats(categories.map(c => c.id)); // Select all by default
+              setShowBatchSub(true);
+            }}
+            className="flex items-center gap-1.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-foreground px-4 py-2 text-xs font-bold transition cursor-pointer"
+          >
+            <CheckSquare className="h-4 w-4 text-gold" />
+            Ajouter une sous-catégorie
+          </button>
+          <button
+            onClick={() => setShowCreateCat(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-gold text-black px-4 py-2 text-xs font-bold hover:bg-gold/90 transition shadow-md cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            Nouvelle Catégorie
+          </button>
+        </div>
       </div>
 
       {/* Categories Grid / List */}
@@ -207,6 +276,11 @@ export default function Categories({ categories = [], fetchCategories }) {
                     <Plus className="h-3 w-3" />
                     Sous-catégorie
                   </button>
+                  <IconButton
+                    icon={<Copy className="h-3.5 w-3.5 text-gold/80" />}
+                    onClick={() => duplicateCategory(cat)}
+                    title="Dupliquer la catégorie"
+                  />
                   <IconButton
                     icon={<Pencil className="h-3.5 w-3.5 text-foreground/70" />}
                     onClick={() => {
@@ -388,6 +462,80 @@ export default function Categories({ categories = [], fetchCategories }) {
               className="rounded-xl bg-gold text-black px-4 py-2 text-xs font-bold hover:bg-gold/90 transition shadow-sm"
             >
               Enregistrer
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal Création Groupée de Sous-Catégorie */}
+      <Modal open={showBatchSub} onClose={() => setShowBatchSub(false)} title="Ajouter une sous-catégorie à plusieurs catégories">
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); createBatchSubCategory(); }}>
+          <Field label="Nom de la sous-catégorie">
+            <input
+              autoFocus
+              className={inputCls}
+              value={batchSubName}
+              onChange={(e) => setBatchSubName(e.target.value)}
+              placeholder="ex: Mocassins, Talons, Chemises..."
+            />
+          </Field>
+
+          <div className="space-y-2 border-t border-white/5 pt-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-foreground/75">Sélectionner les catégories parents :</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBatchSelectedCats(categories.map(c => c.id))}
+                  className="text-[10px] text-gold hover:underline font-semibold"
+                >
+                  Toutes
+                </button>
+                <span className="text-foreground/30 text-[10px]">|</span>
+                <button
+                  type="button"
+                  onClick={() => setBatchSelectedCats([])}
+                  className="text-[10px] text-foreground/50 hover:underline font-semibold"
+                >
+                  Aucune
+                </button>
+              </div>
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-1.5 p-2 bg-black/35 rounded-xl border border-white/5">
+              {categories.map(cat => {
+                const isChecked = batchSelectedCats.includes(cat.id);
+                return (
+                  <label key={cat.id} className="flex items-center gap-2 px-2 py-1 hover:bg-white/[0.03] rounded-lg cursor-pointer text-xs">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => {
+                        setBatchSelectedCats(prev =>
+                          isChecked ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
+                        );
+                      }}
+                      className="rounded border-white/10 text-gold focus:ring-gold bg-zinc-950"
+                    />
+                    <span className="text-foreground/80 font-medium">{cat.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              className="rounded-xl bg-white/[0.06] px-4 py-2 text-xs text-foreground/80 hover:bg-white/10 font-medium"
+              onClick={() => setShowBatchSub(false)}
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl bg-gold text-black px-4 py-2 text-xs font-bold hover:bg-gold/90 transition shadow-sm"
+            >
+              Ajouter la sous-catégorie
             </button>
           </div>
         </form>

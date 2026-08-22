@@ -16,8 +16,29 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [newAdvanceAmount, setNewAdvanceAmount] = useState('');
-  const [advancePaymentMethod, setAdvancePaymentMethod] = useState('CASH');
+  const [selectedMethods, setSelectedMethods] = useState(['CASH']);
+  const [methodAmounts, setMethodAmounts] = useState({ CASH: '', ONLINE: '', ORANGE_MONEY: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const getFinalPaymentMethod = () => {
+    if (selectedMethods.length === 0) return 'CASH';
+    if (selectedMethods.length === 1) return selectedMethods[0];
+    const parts = selectedMethods.map(m => {
+      const v = parseFloat(methodAmounts[m]) || 0;
+      return `${m}=${v}`;
+    });
+    return `MULTIPLE:${parts.join(';')}`;
+  };
+
+  const validateMultiplePayments = (targetTotal) => {
+    if (selectedMethods.length <= 1) return true;
+    const sum = selectedMethods.reduce((acc, m) => acc + (parseFloat(methodAmounts[m]) || 0), 0);
+    if (Math.abs(sum - targetTotal) > 0.01) {
+      alert(`Le montant total réparti (${formatFCFA(sum)}) ne correspond pas au montant requis (${formatFCFA(targetTotal)}).`);
+      return false;
+    }
+    return true;
+  };
 
   useEffect(() => {
     fetchReservations();
@@ -45,7 +66,8 @@ export default function ReservationsView({ categories = [], currentUser, serverO
     setClientName(resObj.clientName || '');
     setClientPhone(resObj.clientPhone || '');
     setNewAdvanceAmount('');
-    setAdvancePaymentMethod('CASH');
+    setSelectedMethods(['CASH']);
+    setMethodAmounts({ CASH: '', ONLINE: '', ORANGE_MONEY: '' });
   };
 
   const handleCloseDrawer = () => {
@@ -89,6 +111,8 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       return alert(`L'avance saisie (${formatFCFA(advanceNum)}) dépasse le solde restant (${formatFCFA(remaining)})`);
     }
 
+    if (!validateMultiplePayments(advanceNum)) return;
+
     setIsSubmitting(true);
     try {
       const response = await fetch(`${API_BASE}/reservations/${selectedRes.id}`, {
@@ -102,7 +126,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
           createdById: currentUser.id,
           newPayment: advanceNum > 0 ? {
             amount: advanceNum,
-            paymentMethod: advancePaymentMethod || 'CASH'
+            paymentMethod: getFinalPaymentMethod()
           } : null
         })
       });
@@ -148,6 +172,8 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       await fetchReservations();
       setSelectedRes(updatedResData);
       setNewAdvanceAmount('');
+      setSelectedMethods(['CASH']);
+      setMethodAmounts({ CASH: '', ONLINE: '', ORANGE_MONEY: '' });
       setIsSubmitting(false);
     } catch (e) {
       console.error(e);
@@ -506,33 +532,99 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                       />
                     </Field>
 
-                    <div className="grid gap-1">
+                    <div className="grid gap-1.5">
                       <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground/50">Mode de paiement</div>
                       <div className="flex gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setAdvancePaymentMethod('CASH')}
-                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'CASH' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                          onClick={() => setSelectedMethods(prev => prev.includes('CASH') ? prev.filter(m => m !== 'CASH') : [...prev, 'CASH'])}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', selectedMethods.includes('CASH') ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
                         >
                           Espèces
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdvancePaymentMethod('ONLINE')}
-                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ONLINE' ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                          onClick={() => setSelectedMethods(prev => prev.includes('ONLINE') ? prev.filter(m => m !== 'ONLINE') : [...prev, 'ONLINE'])}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', selectedMethods.includes('ONLINE') ? 'bg-gold text-black border-gold' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
                         >
                           Mobile
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdvancePaymentMethod('ORANGE_MONEY')}
-                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', advancePaymentMethod === 'ORANGE_MONEY' ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
+                          onClick={() => setSelectedMethods(prev => prev.includes('ORANGE_MONEY') ? prev.filter(m => m !== 'ORANGE_MONEY') : [...prev, 'ORANGE_MONEY'])}
+                          className={cx('flex-1 rounded-xl py-1.5 text-xs font-bold transition border cursor-pointer', selectedMethods.includes('ORANGE_MONEY') ? 'bg-orange-500 text-black border-orange-500' : 'bg-zinc-900 border-white/10 text-foreground/70 hover:bg-white/10')}
                         >
                           Orange
                         </button>
                       </div>
                     </div>
                   </div>
+
+                  {/* Split amounts input for Reservations */}
+                  {selectedMethods.length > 1 && (
+                    <div className="p-3 bg-zinc-900/60 rounded-xl border border-white/5 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10px] uppercase font-bold text-amber-400">Répartition du versement</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = parseFloat(newAdvanceAmount) || 0;
+                            const lastMethod = selectedMethods[selectedMethods.length - 1];
+                            const currentSum = selectedMethods.reduce((sum, m) => sum + (m === lastMethod ? 0 : (parseFloat(methodAmounts[m]) || 0)), 0);
+                            const diff = Math.max(0, target - currentSum);
+                            setMethodAmounts(prev => ({ ...prev, [lastMethod]: diff }));
+                          }}
+                          className="text-[10px] bg-gold/15 text-gold border border-gold/30 hover:bg-gold/30 px-2 py-0.5 rounded transition cursor-pointer font-bold"
+                        >
+                          Auto-équilibrer
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        <div className={cx('grid gap-2', selectedMethods.length === 2 ? 'grid-cols-2' : 'grid-cols-3')}>
+                          {selectedMethods.includes('CASH') && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[10px] text-foreground/50 font-bold">Espèces :</span>
+                              <input
+                                type="number"
+                                placeholder="Montant"
+                                value={methodAmounts.CASH}
+                                onChange={(e) => setMethodAmounts(prev => ({ ...prev, CASH: e.target.value }))}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg p-1.5 text-xs text-left font-mono text-foreground font-bold"
+                              />
+                            </div>
+                          )}
+                          {selectedMethods.includes('ONLINE') && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[10px] text-foreground/50 font-bold">Mobile Money :</span>
+                              <input
+                                type="number"
+                                placeholder="Montant"
+                                value={methodAmounts.ONLINE}
+                                onChange={(e) => setMethodAmounts(prev => ({ ...prev, ONLINE: e.target.value }))}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg p-1.5 text-xs text-left font-mono text-foreground font-bold"
+                              />
+                            </div>
+                          )}
+                          {selectedMethods.includes('ORANGE_MONEY') && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[10px] text-foreground/50 font-bold">Orange Money :</span>
+                              <input
+                                type="number"
+                                placeholder="Montant"
+                                value={methodAmounts.ORANGE_MONEY}
+                                onChange={(e) => setMethodAmounts(prev => ({ ...prev, ORANGE_MONEY: e.target.value }))}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg p-1.5 text-xs text-left font-mono text-foreground font-bold"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="border-t border-white/5 pt-2 flex justify-between text-[11px] font-bold">
+                          <span>Saisi: {formatFCFA(selectedMethods.reduce((sum, key) => sum + (parseFloat(methodAmounts[key]) || 0), 0))}</span>
+                          <span className="text-gold">Requis: {formatFCFA(parseFloat(newAdvanceAmount) || 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

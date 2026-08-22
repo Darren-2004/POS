@@ -12,6 +12,22 @@ export const getTodayDateStr = () => {
 };
 
 export const getPaymentMethodLabel = (method) => {
+  const methodStr = String(method || '').trim();
+  if (methodStr.startsWith('MULTIPLE:')) {
+    const parts = methodStr.substring(9).split(';');
+    const labels = parts.map(part => {
+      const [key, val] = part.split('=');
+      const k = String(key || '').trim().toUpperCase();
+      const v = parseFloat(val) || 0;
+      let label = '';
+      if (k === 'CASH') label = 'Espèces';
+      else if (k === 'ONLINE') label = 'Mobile Money';
+      else if (k === 'ORANGE_MONEY') label = 'Orange Money';
+      else label = k;
+      return `${label}: ${new Intl.NumberFormat('fr-FR').format(v)} FCFA`;
+    });
+    return labels.join(', ');
+  }
   if (method === 'CASH') return 'Espèces';
   if (method === 'ONLINE') return 'Mobile Money';
   if (method === 'ORANGE_MONEY') return 'Orange Money';
@@ -24,24 +40,60 @@ export const showToast = (message, type = 'success') => {
   }
 };
 
+export const renderPaymentMethodHTML = (method) => {
+  const methodStr = String(method || '').trim();
+  if (methodStr.startsWith('MULTIPLE:')) {
+    const parts = methodStr.substring(9).split(';');
+    const lines = parts.map(part => {
+      const [key, val] = part.split('=');
+      const k = String(key || '').trim().toUpperCase();
+      const v = parseFloat(val) || 0;
+      let label = '';
+      if (k === 'CASH') label = 'Espèces';
+      else if (k === 'ONLINE') label = 'Mobile Money';
+      else if (k === 'ORANGE_MONEY') label = 'Orange Money';
+      else label = k;
+      return `<div style="display:flex;justify-content:space-between;padding-left:12px;font-size:8.5pt;margin:1px 0;opacity:0.9;">
+        <span>• ${label} :</span>
+        <span>${new Intl.NumberFormat('fr-FR').format(v)} FCFA</span>
+      </div>`;
+    });
+    return `<div>
+      <div style="font-weight:bold;margin-bottom:2px;">Règlement :</div>
+      ${lines.join('')}
+    </div>`;
+  }
+
+  // Single method
+  let label = 'Non précisé';
+  if (methodStr === 'CASH') label = 'Espèces';
+  else if (methodStr === 'ONLINE') label = 'Mobile Money';
+  else if (methodStr === 'ORANGE_MONEY') label = 'Orange Money';
+  return `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
+    <span>Règlement :</span>
+    <span>${label}</span>
+  </div>`;
+};
+
 let lastPrintedId = null;
 let lastPrintTimestamp = 0;
 let isPrintingBusy = false;
 
+// ─── Normal Cashier Sales Receipt Print ──────────────────────────────────────
 export const triggerPrint = (invoiceData) => {
-  const now = Date.now();
-  const printId = invoiceData.invoiceNumber || invoiceData.id || JSON.stringify(invoiceData.items || []);
-
-  if (isPrintingBusy || (lastPrintedId === printId && now - lastPrintTimestamp < 6000) || (now - lastPrintTimestamp < 3500)) {
+  if (isPrintingBusy) {
     showToast("⏳ Impression déjà en cours, veuillez patienter...", "info");
     return;
   }
+  if (lastPrintedId === invoiceData.id && (Date.now() - lastPrintTimestamp < 3000)) {
+    console.log("Ignored duplicate print click");
+    return;
+  }
+  lastPrintedId = invoiceData.id;
+  lastPrintTimestamp = Date.now();
   isPrintingBusy = true;
-  lastPrintedId = printId;
-  lastPrintTimestamp = now;
 
   const isZ = invoiceData.isZReport;
-  const zr = invoiceData.zReport;
 
   const groupItems = (items = []) => {
     const map = {};
@@ -53,22 +105,21 @@ export const triggerPrint = (invoiceData) => {
     return Object.values(map);
   };
 
-  const itemsRows = !isZ
-    ? `
-      <div style="width:100%; margin:4px 0; font-size:8.5pt;">
-        <!-- Header -->
-        <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1.5px solid #000; padding-bottom:2px;">
-          <span style="flex:1; text-align:left;">Désignation</span>
-          <span style="width:180px; display:flex; justify-content:space-between;">
-            <span style="width:40px; text-align:center;">Qté</span>
-            <span style="width:10px; text-align:center;"></span>
-            <span style="width:60px; text-align:right;">P/U</span>
-            <span style="width:10px; text-align:center;"></span>
-            <span style="width:60px; text-align:right;">Total</span>
-          </span>
-        </div>
-        <!-- Items -->
-        ${groupItems(invoiceData.items).map(item => `
+  const itemsRows = `
+    <div style="width:100%; margin:4px 0; font-size:8.5pt;">
+      <!-- Header -->
+      <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1.5px solid #000; padding-bottom:2px;">
+        <span style="flex:1; text-align:left;">Désignation</span>
+        <span style="width:180px; display:flex; justify-content:space-between;">
+          <span style="width:40px; text-align:center;">Qté</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">P/U</span>
+          <span style="width:10px; text-align:center;"></span>
+          <span style="width:60px; text-align:right;">Total</span>
+        </span>
+      </div>
+      <!-- Items -->
+      ${groupItems(invoiceData.items || []).map(item => `
         <div style="display:flex; justify-content:space-between; border-bottom:0.5px solid #eee; padding:3px 0; align-items:flex-start;">
           <span style="flex:1; text-align:left; word-break:break-word; overflow-wrap:break-word; padding-right:4px;">${item.categoryName}</span>
           <span style="width:180px; display:flex; justify-content:space-between; flex-wrap:wrap; align-items:flex-start;">
@@ -79,33 +130,23 @@ export const triggerPrint = (invoiceData) => {
             <span style="width:60px; text-align:right; font-weight:bold; word-break:break-all;">${Math.round(item.price * item.qty).toLocaleString('fr-FR')}</span>
           </span>
         </div>
-        `).join('')}
-      </div>`
-    : '';
+      `).join('')}
+    </div>`;
 
-  const topSellingRows = isZ
-    ? (zr.topSelling || []).map(cat => `
-        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;word-break:break-word;">
-          <span style="flex:1;min-width:0;word-break:break-word;">${cat.name} (x${cat.quantity})</span>
-          <span style="word-break:break-all;margin-left:4px;">${Math.round(cat.revenue).toLocaleString('fr-FR')} FCFA</span>
-        </div>`).join('')
-    : '';
-
-  let clientNameStr = invoiceData.clientName || '';
+  const clientNameStr = invoiceData.clientName || '';
   let clientPhoneStr = invoiceData.clientPhone || '';
 
+  // Extract phone if embedded in name
   if (!clientPhoneStr && clientNameStr.includes('(') && clientNameStr.includes(')')) {
     const match = clientNameStr.match(/^(.+?)\s*\((.+?)\)$/);
     if (match) {
-      clientNameStr = match[1].trim();
+      invoiceData.clientName = match[1].trim();
       clientPhoneStr = match[2].trim();
     }
-  } else if (!clientPhoneStr && /^[0-9+\s-]+$/.test(clientNameStr.trim())) {
-    clientPhoneStr = clientNameStr.trim();
-    clientNameStr = '';
   }
 
-  const hasName = clientNameStr && clientNameStr !== 'Client de passage';
+  const clientNameOnly = invoiceData.clientName || '';
+  const hasName = clientNameOnly && clientNameOnly !== 'Client de passage';
   const hasPhone = Boolean(clientPhoneStr);
 
   const printHTML = isZ ? `
@@ -115,20 +156,24 @@ export const triggerPrint = (invoiceData) => {
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
     </div>
     <div style="font-size:9pt;">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Date:</span><span style="white-space:nowrap;">${zr.date} ${zr.time}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Date:</span><span style="white-space:nowrap;">${invoiceData.zReport.date} ${invoiceData.zReport.time}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Opérateur:</span><span style="word-break:break-word;">${invoiceData.createdBy?.name || 'Admin'}</span></div>
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
       <div style="font-weight:bold;font-size:10pt;margin-bottom:4px;">SYNTHÈSE COMPTABLE</div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:11pt;font-weight:bold;margin:4px 0;"><span>TOTAL NET:</span><span>${Math.round(zr.totalSales).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:11pt;font-weight:bold;margin:4px 0;"><span>TOTAL NET:</span><span>${Math.round(invoiceData.zReport.totalSales).toLocaleString('fr-FR')} FCFA</span></div>
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Espèces:</span><span>${Math.round(zr.totalCash || zr.payments?.CASH || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Mobile Money:</span><span>${Math.round(zr.totalOnline || zr.payments?.ONLINE || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Orange Money:</span><span>${Math.round(zr.payments?.ORANGE_MONEY || 0).toLocaleString('fr-FR')} FCFA</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Ventes Validées:</span><span>${zr.validatedCount}</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Ventes Annulées:</span><span>${zr.cancelledCount}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Espèces:</span><span>${Math.round(invoiceData.zReport.totalCash || invoiceData.zReport.payments?.CASH || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Mobile Money:</span><span>${Math.round(invoiceData.zReport.totalOnline || invoiceData.zReport.payments?.ONLINE || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Orange Money:</span><span>${Math.round(invoiceData.zReport.payments?.ORANGE_MONEY || 0).toLocaleString('fr-FR')} FCFA</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Ventes Validées:</span><span>${invoiceData.zReport.validatedCount}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Ventes Annulées:</span><span>${invoiceData.zReport.cancelledCount}</span></div>
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
       <div style="font-weight:bold;font-size:10pt;margin-bottom:4px;">RÉPARTITION PAR CATÉGORIE</div>
-      ${topSellingRows}
+      ${(invoiceData.zReport.topSelling || []).map(cat => `
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;word-break:break-word;">
+          <span style="flex:1;min-width:0;word-break:break-word;">${cat.name} (x${cat.quantity})</span>
+          <span style="word-break:break-all;margin-left:4px;">${Math.round(cat.revenue).toLocaleString('fr-FR')} FCFA</span>
+        </div>`).join('')}
       <p style="text-align:center;margin-top:16px;font-size:9pt;font-weight:bold;">--- FIN DU RAPPORT Z ---</p>
     </div>
   ` : `
@@ -145,7 +190,7 @@ export const triggerPrint = (invoiceData) => {
       </div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Date:</span><span style="white-space:nowrap;">${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Caissière:</span><span style="word-break:break-word;">${invoiceData.createdBy?.name || 'Caissière'}</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Règlement:</span><span>${getPaymentMethodLabel(invoiceData.paymentMethod)}</span></div>
+      ${renderPaymentMethodHTML(invoiceData.paymentMethod)}
       ${hasName ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
         <span>Nom client:</span>
