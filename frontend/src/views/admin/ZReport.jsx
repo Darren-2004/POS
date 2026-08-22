@@ -8,6 +8,7 @@ export default function ZReport({ zReportData, onGenerate, onPrint }) {
   const [endDate, setEndDate] = useState(today);
 
   const handleApplyPreset = (type) => {
+    const now = new Date();
     const todayStr = getTodayDateStr();
     if (type === 'today') {
       setStartDate(todayStr);
