@@ -346,7 +346,7 @@ app.put('/api/categories/:id', async (req, res) => {
     const updated = await prisma.category.update({
       where: { id },
       data: { ...(name ? { name: name.trim() } : {}), ...(color ? { color } : {}) },
-      include: { subCategories: true }
+      include: { subCategories: { orderBy: { name: 'asc' } } }
     });
     res.json(updated);
   } catch (error) {
@@ -368,7 +368,7 @@ app.post('/api/categories/:id/duplicate', async (req, res) => {
   try {
     const original = await prisma.category.findUnique({
       where: { id },
-      include: { subCategories: true }
+      include: { subCategories: { orderBy: { name: 'asc' } } }
     });
 
     if (!original) {
@@ -394,7 +394,7 @@ app.post('/api/categories/:id/duplicate', async (req, res) => {
 
       return await tx.category.findUnique({
         where: { id: newCat.id },
-        include: { subCategories: true }
+        include: { subCategories: { orderBy: { name: 'asc' } } }
       });
     });
 
