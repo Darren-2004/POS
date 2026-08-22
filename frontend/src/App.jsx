@@ -52,6 +52,7 @@ export default function App() {
   const [categories, setCategories] = useState([]);
   const [serverOnline, setServerOnline] = useState(true);
   const [toast, setToast] = useState(null);
+  const [cashierTab, setCashierTab] = useState('sale'); // lifted so Header can render tabs
 
   useEffect(() => {
     const handleToast = (e) => {
@@ -154,6 +155,8 @@ export default function App() {
           currentView={currentView}
           setCurrentView={setCurrentView}
           onLogout={handleLogout}
+          cashierTab={cashierTab}
+          setCashierTab={setCashierTab}
         />
 
         <main className="h-full flex flex-col p-4 md:p-6 overflow-hidden">
@@ -171,6 +174,8 @@ export default function App() {
               categories={categories}
               currentUser={currentUser}
               serverOnline={serverOnline}
+              activeTab={cashierTab}
+              setActiveTab={setCashierTab}
             />
           )}
 

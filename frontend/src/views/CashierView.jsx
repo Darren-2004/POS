@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { Search, ShoppingBag, Clock, PlusCircle, Receipt, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Clock, PlusCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import Field, { inputCls } from '../components/Field';
 import ReservationsView from '../components/ReservationsView';
 import CashierInvoicesView from '../components/CashierInvoicesView';
+import CashierStatsView from '../components/CashierStatsView';
 import { formatFCFA, triggerPrint, triggerProformaPrint, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
-export default function CashierView({ categories, currentUser, serverOnline }) {
-  const [activeTab, setActiveTab] = useState('sale'); // 'sale' | 'reservations'
+export default function CashierView({ categories, currentUser, serverOnline, activeTab, setActiveTab }) {
+  // activeTab/setActiveTab are lifted to App so Header can render the tabs
   const [cart, setCart] = useState([]);
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
@@ -196,46 +197,12 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-white/[0.02] p-3 sm:p-4">
-      {/* Navigation tabs for Cashier */}
-      <div className="flex items-center gap-2 border-b border-white/10 pb-3 mb-2 shrink-0">
-        <button
-          onClick={() => setActiveTab('sale')}
-          className={cx(
-            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer',
-            activeTab === 'sale' ? 'bg-gold text-black shadow-md shadow-gold/20' : 'bg-white/[0.03] text-foreground/70 hover:bg-white/10'
-          )}
-        >
-          <ShoppingBag className="h-4 w-4" />
-          <span>Vente Directe</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('reservations')}
-          className={cx(
-            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer',
-            activeTab === 'reservations' ? 'bg-gold text-black shadow-md shadow-gold/20' : 'bg-white/[0.03] text-foreground/70 hover:bg-white/10'
-          )}
-        >
-          <Clock className="h-4 w-4" />
-          <span>Gestion des Réservations</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('my_invoices')}
-          className={cx(
-            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer',
-            activeTab === 'my_invoices' ? 'bg-gold text-black shadow-md shadow-gold/20' : 'bg-white/[0.03] text-foreground/70 hover:bg-white/10'
-          )}
-        >
-          <Receipt className="h-4 w-4" />
-          <span>Mes Ventes & Réimpression</span>
-        </button>
-      </div>
-
       {activeTab === 'reservations' ? (
         <ReservationsView categories={categories} currentUser={currentUser} serverOnline={serverOnline} />
       ) : activeTab === 'my_invoices' ? (
         <CashierInvoicesView currentUser={currentUser} serverOnline={serverOnline} />
+      ) : activeTab === 'stats' ? (
+        <CashierStatsView currentUser={currentUser} serverOnline={serverOnline} />
       ) : (
         <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
           <div className="flex w-72 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5">
@@ -572,7 +539,6 @@ export default function CashierView({ categories, currentUser, serverOnline }) {
                   onClick={() => {
                     if (cart.length === 0) return alert('Le panier est vide');
                     setShowReservationMode(true);
-                    if (!paymentMethod) setPaymentMethod('CASH');
                   }}
                   disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
                   className={cx(

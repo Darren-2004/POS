@@ -157,7 +157,7 @@ export const triggerPrint = (invoiceData) => {
     </div>
     <div style="font-size:9pt;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Date:</span><span style="white-space:nowrap;">${invoiceData.zReport.date} ${invoiceData.zReport.time}</span></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Opérateur:</span><span style="word-break:break-word;">${invoiceData.createdBy?.name || 'Admin'}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;"><span>Opérateur:</span><span style="word-break:break-word;">${invoiceData.zReport.cashierName || invoiceData.createdBy?.name || 'Admin'}</span></div>
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
       <div style="font-weight:bold;font-size:10pt;margin-bottom:4px;">SYNTHÈSE COMPTABLE</div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:11pt;font-weight:bold;margin:4px 0;"><span>TOTAL NET:</span><span>${Math.round(invoiceData.zReport.totalSales).toLocaleString('fr-FR')} FCFA</span></div>

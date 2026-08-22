@@ -39,9 +39,23 @@ export default function LoginView({ users, serverOnline, setCurrentUser, setCurr
     setAuthError('');
     if (resetPinStep) {
       if (newPin.length < 4) setNewPin(prev => prev + val);
-      else if (confirmPin.length < 4) setConfirmPin(prev => prev + val);
+      else if (confirmPin.length < 4) {
+        const next = confirmPin + val;
+        setConfirmPin(next);
+        if (next.length === 4) {
+          // auto-confirm when both pins are 4 digits
+          setTimeout(handleResetPinSubmit, 0);
+        }
+      }
     } else {
-      if (enteredPin.length < 4) setEnteredPin(prev => prev + val);
+      if (enteredPin.length < 4) {
+        const next = enteredPin + val;
+        setEnteredPin(next);
+        if (next.length === 4) {
+          // auto-login on 4th digit
+          setTimeout(() => handleLoginSubmitWith(next), 0);
+        }
+      }
     }
   };
 
@@ -54,8 +68,8 @@ export default function LoginView({ users, serverOnline, setCurrentUser, setCurr
     }
   };
 
-  const handleLoginSubmit = async () => {
-    if (enteredPin.length < 4) {
+  const handleLoginSubmitWith = async (pin) => {
+    if (!pin || pin.length < 4) {
       setAuthError('Code PIN à 4 chiffres requis');
       return;
     }
@@ -63,7 +77,7 @@ export default function LoginView({ users, serverOnline, setCurrentUser, setCurr
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: selectedUser.id, pin: enteredPin })
+        body: JSON.stringify({ userId: selectedUser.id, pin })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -81,8 +95,11 @@ export default function LoginView({ users, serverOnline, setCurrentUser, setCurr
       setCurrentView(data.role === 'ADMIN' ? 'admin' : 'cashier');
     } catch {
       setAuthError('Connexion impossible au serveur central');
+      setEnteredPin('');
     }
   };
+
+  const handleLoginSubmit = () => handleLoginSubmitWith(enteredPin);
 
   const handleResetPinSubmit = async () => {
     if (newPin.length < 4) {

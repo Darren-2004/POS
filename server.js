@@ -1188,7 +1188,7 @@ function getPaymentMethodBreakdown(paymentMethod, totalAmount) {
 
 // Rapport Z pour une date ou une période donnée (startDate & endDate)
 app.get('/api/z-report', async (req, res) => {
-  const { date, startDate, endDate } = req.query;
+  const { date, startDate, endDate, cashierId } = req.query;
 
   let start, end;
   if (startDate && endDate) {
@@ -1207,24 +1207,33 @@ app.get('/api/z-report', async (req, res) => {
   }
 
   try {
+    let cashierName = null;
+    if (cashierId) {
+      const cUser = await prisma.user.findUnique({ where: { id: cashierId } });
+      if (cUser) cashierName = cUser.name;
+    }
+
     const invoices = await prisma.invoice.findMany({
       where: {
         status: 'VALIDATED',
-        createdAt: { gte: start, lte: end }
+        createdAt: { gte: start, lte: end },
+        ...(cashierId ? { createdById: cashierId } : {})
       }
     });
 
     const resPayments = await prisma.reservationPayment.findMany({
       where: {
         createdAt: { gte: start, lte: end },
-        reservation: { status: { not: 'CANCELLED' } }
+        reservation: { status: { not: 'CANCELLED' } },
+        ...(cashierId ? { createdById: cashierId } : {})
       }
     });
 
     const cancelledCount = await prisma.invoice.count({
       where: {
         status: 'CANCELLED',
-        createdAt: { gte: start, lte: end }
+        createdAt: { gte: start, lte: end },
+        ...(cashierId ? { createdById: cashierId } : {})
       }
     });
 
@@ -1255,7 +1264,8 @@ app.get('/api/z-report', async (req, res) => {
       where: {
         invoice: {
           status: 'VALIDATED',
-          createdAt: { gte: start, lte: end }
+          createdAt: { gte: start, lte: end },
+          ...(cashierId ? { createdById: cashierId } : {})
         }
       }
     });
@@ -1286,7 +1296,8 @@ app.get('/api/z-report', async (req, res) => {
       topSelling,
       periodLabel,
       date: periodLabel,
-      time: new Date().toLocaleTimeString('fr-FR')
+      time: new Date().toLocaleTimeString('fr-FR'),
+      cashierName
     });
   } catch (err) {
     console.error(err);

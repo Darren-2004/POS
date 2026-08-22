@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Printer, Eye, X, Receipt, Calendar, User, CreditCard } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import StatusChip from './StatusChip';
-import { formatFCFA, triggerPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
+import { formatFCFA, triggerPrint, getPaymentMethodLabel, getTodayDateStr, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
 export default function CashierInvoicesView({ currentUser, serverOnline }) {
@@ -10,24 +10,36 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  
+  // Date and status filters
+  const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
+  const [selectedStatus, setSelectedStatus] = useState('VALIDATED'); // Default to valid transactions
 
   useEffect(() => {
     if (currentUser?.id) {
       fetchCashierInvoices();
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, selectedDate, selectedStatus]);
 
   useEffect(() => {
     const handleRefresh = () => fetchCashierInvoices();
     window.addEventListener('pos:dashboard-refresh', handleRefresh);
     return () => window.removeEventListener('pos:dashboard-refresh', handleRefresh);
-  }, [currentUser?.id]);
+  }, [currentUser?.id, selectedDate, selectedStatus]);
 
   const fetchCashierInvoices = async () => {
     if (!currentUser?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/invoices?cashierId=${currentUser.id}`);
+      let url = `${API_BASE}/invoices?cashierId=${currentUser.id}`;
+      if (selectedDate) {
+        url += `&date=${selectedDate}`;
+      }
+      if (selectedStatus && selectedStatus !== 'all') {
+        url += `&status=${selectedStatus}`;
+      }
+      
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setInvoices(Array.isArray(data) ? data : []);
@@ -69,12 +81,44 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Date Selector Filter */}
+          <div className="flex items-center gap-2 bg-zinc-900 border border-white/10 rounded-xl px-2 py-1">
+            <Calendar className="h-3.5 w-3.5 text-gold" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="bg-transparent border-none text-foreground text-xs font-bold outline-none cursor-pointer [color-scheme:dark]"
+            />
+            {selectedDate && (
+              <button
+                onClick={() => setSelectedDate('')}
+                className="text-[10px] text-foreground/40 hover:text-white px-1 font-bold"
+                title="Toutes les dates"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Status Dropdown Filter */}
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="bg-zinc-900 border border-white/10 text-foreground text-xs font-bold rounded-xl px-3 py-1.5 outline-none cursor-pointer"
+          >
+            <option value="all">Tous statuts</option>
+            <option value="VALIDATED">Validées</option>
+            <option value="CANCELLED">Annulées</option>
+          </select>
+
+          {/* Search bar */}
+          <div className="relative w-60">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
             <input
               type="text"
-              placeholder="Rechercher N° de facture ou client..."
+              placeholder="Rechercher N° de facture..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs')}
