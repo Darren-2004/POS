@@ -187,6 +187,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
               setFilterCashier={setReservationFilterCashier}
               selectedReservationId={selectedReservationId}
               setSelectedReservationId={setSelectedReservationId}
+              onRefresh={() => refreshReservationsData(reservationFilterDate, reservationFilterCashier)}
             />
           )}
 

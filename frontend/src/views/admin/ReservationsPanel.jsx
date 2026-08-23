@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatFCFA, getTodayDateStr, triggerProformaPrint, cx } from '../../utils/helpers';
-import { RotateCcw, Calendar, Printer } from 'lucide-react';
+import { RotateCcw, Calendar, Printer, Trash2, XCircle } from 'lucide-react';
 
 export default function ReservationsPanel({
   reservations = [],
@@ -10,9 +10,71 @@ export default function ReservationsPanel({
   filterCashier,
   setFilterCashier,
   selectedReservationId,
-  setSelectedReservationId
+  setSelectedReservationId,
+  onRefresh
 }) {
   const [reservationStatusFilter, setReservationStatusFilter] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelReservation = async (resId) => {
+    if (!resId) return;
+    if (!window.confirm("Êtes-vous sûr de vouloir annuler définitivement cette réservation ? Cette action est irréversible.")) {
+      return;
+    }
+    
+    setIsCancelling(true);
+    try {
+      const { API_BASE } = await import('../../utils/constants');
+      const response = await fetch(`${API_BASE}/reservations/${resId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        alert("Réservation annulée avec succès.");
+        setSelectedReservationId(null);
+        if (onRefresh) onRefresh();
+        window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
+      } else {
+        const err = await response.json().catch(() => ({}));
+        alert(err.error || "Erreur lors de l'annulation de la réservation.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erreur réseau");
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const handleDeleteReservation = async (resId) => {
+    if (!resId) return;
+    if (!window.confirm("Êtes-vous sûr de vouloir supprimer définitivement cette réservation de la base de données ? Toutes les données associées (versements, détails) seront perdues.")) {
+      return;
+    }
+    
+    setIsCancelling(true);
+    try {
+      const { API_BASE } = await import('../../utils/constants');
+      const response = await fetch(`${API_BASE}/reservations/${resId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        alert("Réservation supprimée définitivement.");
+        setSelectedReservationId(null);
+        if (onRefresh) onRefresh();
+        window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
+      } else {
+        const err = await response.json().catch(() => ({}));
+        alert(err.error || "Erreur lors de la suppression de la réservation.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erreur réseau");
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const todayStr = getTodayDateStr();
 
@@ -169,9 +231,39 @@ export default function ReservationsPanel({
                         <td className="p-3 text-right font-mono text-[11px] text-emerald-400">{formatFCFA(totalPaid)}</td>
                         <td className="p-3">
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            <span className={cx('inline-flex rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider', res.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                              {res.status === 'COMPLETED' ? 'Terminée' : 'En cours'}
+                            <span className={cx(
+                              'inline-flex rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider',
+                              res.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' :
+                              res.status === 'CANCELLED' ? 'bg-red-500/15 text-red-400' :
+                              'bg-amber-500/15 text-amber-400'
+                            )}>
+                              {res.status === 'COMPLETED' ? 'Terminée' :
+                               res.status === 'CANCELLED' ? 'Annulée' :
+                               'En cours'}
                             </span>
+                            
+                            {res.status === 'CANCELLED' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteReservation(res.id)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-bold border border-red-500/30 transition cursor-pointer"
+                                title="Supprimer définitivement"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                <span>Supprimer</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelReservation(res.id)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-400 text-[10px] font-bold border border-amber-500/30 transition cursor-pointer"
+                                title="Annuler la réservation"
+                              >
+                                <XCircle className="h-3 w-3" />
+                                <span>Annuler</span>
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => triggerProformaPrint(res)}
@@ -207,8 +299,15 @@ export default function ReservationsPanel({
                       <div className="text-[10px] uppercase tracking-[0.2em] text-foreground/40">Référence</div>
                       <div className="mt-1 font-bold text-gold">{selectedReservation.reservationNo}</div>
                     </div>
-                    <span className={cx('rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider', selectedReservation.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                      {selectedReservation.status === 'COMPLETED' ? 'Terminée' : 'En cours'}
+                    <span className={cx(
+                      'rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wider',
+                      selectedReservation.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' :
+                      selectedReservation.status === 'CANCELLED' ? 'bg-red-500/15 text-red-400' :
+                      'bg-amber-500/15 text-amber-400'
+                    )}>
+                      {selectedReservation.status === 'COMPLETED' ? 'Terminée' :
+                       selectedReservation.status === 'CANCELLED' ? 'Annulée' :
+                       'En cours'}
                     </span>
                   </div>
 
@@ -260,6 +359,17 @@ export default function ReservationsPanel({
                         <div className="mt-1 font-medium">{selectedReservation.updatedBy?.name || 'N/A'}</div>
                         <div className="text-[10px] text-foreground/55">{new Date(selectedReservation.updatedAt).toLocaleString('fr-FR')}</div>
                       </div>
+                    )}
+                    
+                    {selectedReservation.status !== 'CANCELLED' && (
+                      <button
+                        type="button"
+                        onClick={() => handleCancelReservation(selectedReservation.id)}
+                        disabled={isCancelling}
+                        className="w-full mt-2 rounded-xl bg-red-950/40 hover:bg-red-950/60 text-red-400 border border-red-500/30 py-2.5 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                      >
+                        ✕ {isCancelling ? 'Annulation...' : 'Annuler la réservation'}
+                      </button>
                     )}
                   </div>
                 </div>

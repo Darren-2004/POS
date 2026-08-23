@@ -19,6 +19,36 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const [selectedMethods, setSelectedMethods] = useState(['CASH']);
   const [methodAmounts, setMethodAmounts] = useState({ CASH: '', ONLINE: '', ORANGE_MONEY: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelReservation = async () => {
+    if (!selectedRes) return;
+    if (!window.confirm("Êtes-vous sûr de vouloir annuler définitivement cette réservation ? Cette action est irréversible.")) {
+      return;
+    }
+    
+    setIsCancelling(true);
+    try {
+      const response = await fetch(`${API_BASE}/reservations/${selectedRes.id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        alert("Réservation annulée avec succès.");
+        window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
+        handleCloseDrawer();
+        fetchReservations();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        alert(err.error || "Erreur lors de l'annulation de la réservation.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erreur réseau");
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const getFinalPaymentMethod = () => {
     if (selectedMethods.length === 0) return 'CASH';
@@ -643,6 +673,20 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                 <Printer className="h-4 w-4 text-gold" />
                 <span>Réimprimer Reçu</span>
               </button>
+
+              {/* Admin-only Cancel Reservation Button */}
+              {currentUser?.role === 'ADMIN' && selectedRes.status !== 'CANCELLED' && (
+                <button
+                  type="button"
+                  onClick={handleCancelReservation}
+                  disabled={isCancelling || !serverOnline}
+                  className="rounded-2xl bg-red-950/40 hover:bg-red-950/60 text-red-400 border border-red-500/30 py-3 px-4 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Annuler définitivement cette réservation"
+                >
+                  <X className="h-4 w-4 text-red-400" />
+                  <span>{isCancelling ? 'Annulation...' : 'Annuler Réservation'}</span>
+                </button>
+              )}
 
               {/* Main action — dynamically shows what will happen */}
               {getRemainingBalance(selectedRes) > 0.01 && (

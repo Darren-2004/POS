@@ -1120,6 +1120,21 @@ app.post('/api/reservations/:id/cancel', async (req, res) => {
   }
 });
 
+// Supprimer définitivement une réservation
+app.delete('/api/reservations/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // cascade deletes for ReservationItem and ReservationPayment are handled by the database schema onDelete: Cascade rules
+    await prisma.reservation.delete({
+      where: { id }
+    });
+    res.json({ success: true, message: 'Réservation supprimée définitivement.' });
+  } catch (error) {
+    console.error('Delete reservation error:', error);
+    res.status(500).json({ error: 'Erreur lors de la suppression de la réservation' });
+  }
+});
+
 
 // Endpoint pour récupérer les paiements d'acomptes de réservations (pour le tableau de bord)
 app.get('/api/reservation-payments', async (req, res) => {
