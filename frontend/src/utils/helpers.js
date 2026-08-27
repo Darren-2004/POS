@@ -208,7 +208,10 @@ export const triggerPrint = (invoiceData) => {
     <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:5px;">
       <span>TOTAL À PAYER:</span><span style="word-break:break-all;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
     </div>
-    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
+    <p style="text-align:center;margin-top:10px;font-size:8.5pt;font-weight:bold;border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;">
+      Un article vendu n'est ni remboursable ni changeable
+    </p>
+    <p style="text-align:center;margin-top:6px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
     <div style="text-align:center;margin-top:8px;font-size:7.5pt;color:#000;font-weight:bold;">Fait par © TriSpark Digital</div>
   `;
 
@@ -271,12 +274,19 @@ export const triggerProformaPrint = (reservation) => {
   isPrintingBusy = true;
   lastPrintTimestamp = now;
 
-  const paymentsList = (reservation.payments || []).map((p, idx) => `
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;">
-      <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):</span>
-      <span style="word-break:break-all;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
-    </div>
-  `).join('');
+  const payments = reservation.payments || [];
+  const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+  const lastPaymentAmount = lastPayment ? (Number(lastPayment.amount) || 0) : 0;
+
+  const paymentsList = payments.map((p, idx) => {
+    const isLast = idx === payments.length - 1;
+    return `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;${isLast ? 'font-weight:bold;font-size:9.5pt;' : ''}">
+        <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)})${isLast ? ' (Ce jour)' : ''}:</span>
+        <span style="word-break:break-all;font-weight:bold;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+    `;
+  }).join('');
 
   const itemsList = (reservation.items || []).map(item => `
     <div style="display:flex; justify-content:space-between; border-bottom:0.5px solid #eee; padding:3px 0; align-items:flex-start;">
@@ -291,7 +301,7 @@ export const triggerProformaPrint = (reservation) => {
     </div>
   `).join('');
 
-  const totalPaid = (reservation.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const remaining = Math.max(0, (Number(reservation.totalAmount) || 0) - totalPaid);
 
   const printHTML = `
@@ -341,14 +351,22 @@ export const triggerProformaPrint = (reservation) => {
       <div style="font-weight:bold;margin:4px 0 2px 0;">HISTORIQUE DES VERSEMENTS (${reservation.payments?.length || 0}/3):</div>
       ${paymentsList || '<div style="font-style:italic;">Aucun versement effectué</div>'}
       <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:10pt;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:8.5pt;">
         <span>TOTAL DÉJÀ PAYÉ:</span><span style="word-break:break-all;">${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
       </div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:11pt;margin-top:3px;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:9pt;margin-top:2px;font-weight:bold;">
         <span>RESTE À PAYER:</span><span style="word-break:break-all;">${Math.round(remaining).toLocaleString('fr-FR')} FCFA</span>
       </div>
+      ${lastPayment ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;font-weight:900;font-size:13pt;margin:8px 0 4px 0;border:2px solid #000;padding:6px;background:#f9f9f9;">
+        <span>MONTANT PAYÉ CE JOUR:</span>
+        <span style="word-break:break-all;font-size:13pt;">${Math.round(lastPaymentAmount).toLocaleString('fr-FR')} FCFA</span>
+      </div>` : ''}
     </div>
-    <p style="text-align:center;margin-top:14px;font-size:8.5pt;font-weight:bold;">
+    <p style="text-align:center;margin-top:10px;font-size:8.5pt;font-weight:bold;border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;">
+      Un article vendu n'est ni remboursable ni changeable
+    </p>
+    <p style="text-align:center;margin-top:6px;font-size:8.5pt;font-weight:bold;">
       Document Proforma de Réservation.<br>
       La facture définitive est remise après solde complet.<br>
       Merci pour votre confiance - JOEL SHOP
@@ -415,6 +433,8 @@ export const triggerFinalReservationPrint = (invoiceData) => {
   isPrintingBusy = true;
 
   const payments = invoiceData.reservationPayments || [];
+  const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+  const lastPaymentAmount = lastPayment ? (Number(lastPayment.amount) || 0) : 0;
   const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   const groupItems = (items = []) => {
@@ -453,12 +473,15 @@ export const triggerFinalReservationPrint = (invoiceData) => {
       `).join('')}
     </div>`;
 
-  const paymentsRows = payments.map((p, idx) => `
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;font-size:8.5pt;">
-      <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):</span>
-      <span style="font-weight:bold;word-break:break-all;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
-    </div>
-  `).join('');
+  const paymentsRows = payments.map((p, idx) => {
+    const isLast = idx === payments.length - 1;
+    return `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:3px 0;font-size:8.5pt;${isLast ? 'font-weight:bold;' : ''}">
+        <span>Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)})${isLast ? ' (Ce jour)' : ''}:</span>
+        <span style="font-weight:bold;word-break:break-all;">${Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+    `;
+  }).join('');
 
   const printHTML = `
     <div style="text-align:center;margin-bottom:2px;">
@@ -490,16 +513,24 @@ export const triggerFinalReservationPrint = (invoiceData) => {
     <div style="font-weight:bold;margin:4px 0 2px 0;font-size:9pt;">HISTORIQUE DES VERSEMENTS (${payments.length}/3) :</div>
     ${paymentsRows || '<div style="font-style:italic;font-size:8.5pt;">Aucun versement enregistré</div>'}
     <p style="margin:4px 0;border-bottom:1.5px dashed #000;"></p>
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:10pt;">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:8.5pt;">
       <span>TOTAL PAYÉ:</span><span style="word-break:break-all;">${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA</span>
     </div>
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-weight:bold;font-size:11pt;margin-top:3px;color:#000;">
-      <span>SOLDE RESTANT:</span><span>0 FCFA </span>
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;font-size:9pt;margin-top:2px;font-weight:bold;">
+      <span>SOLDE RESTANT:</span><span>0 FCFA</span>
     </div>
-    <p style="text-align:center;margin-top:12px;font-size:9pt;font-weight:bold;border:1.5px solid #000;padding:4px;">
+    ${lastPayment ? `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;font-weight:900;font-size:13pt;margin:8px 0 4px 0;border:2px solid #000;padding:6px;background:#f9f9f9;">
+      <span>MONTANT PAYÉ CE JOUR:</span>
+      <span style="word-break:break-all;font-size:13pt;">${Math.round(lastPaymentAmount).toLocaleString('fr-FR')} FCFA</span>
+    </div>` : ''}
+    <p style="text-align:center;margin-top:10px;font-size:9pt;font-weight:bold;border:1.5px solid #000;padding:4px;">
       RÉSERVATION ENTIÈREMENT SOLDÉE<br>Merci de votre confiance !
     </p>
-    <p style="text-align:center;margin-top:14px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
+    <p style="text-align:center;margin-top:10px;font-size:8.5pt;font-weight:bold;border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;">
+      Un article vendu n'est ni remboursable ni changeable
+    </p>
+    <p style="text-align:center;margin-top:6px;font-size:9pt;font-weight:bold;">Merci de votre visite !</p>
     <div style="text-align:center;margin-top:8px;font-size:7.5pt;color:#000;font-weight:bold;">Fait par © TriSpark Digital</div>
   `;
 
@@ -514,7 +545,7 @@ export const triggerFinalReservationPrint = (invoiceData) => {
             width: 70mm;
             margin: 0;
             padding: 0;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'Liberation Mono', 'DejaVu Sans Mono', 'Courier New', monospace;
             font-size: 9pt;
             font-weight: bold;
             color: #000;

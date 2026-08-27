@@ -1683,9 +1683,43 @@ function formatEscPosInvoice(invoiceData, printer) {
     .text(formatKeyValuePair('TOTAL À PAYER:', `${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA`))
     .bold(false);
 
+  // Si c'est une facture de solde de réservation — afficher l'historique et le montant payé ce jour
+  const resPayments = invoiceData.reservationPayments || [];
+  if (resPayments.length > 0) {
+    printer.text('-'.repeat(48));
+    printer.text('HISTORIQUE DES VERSEMENTS:');
+    const lastResPayment = resPayments[resPayments.length - 1];
+    resPayments.forEach((p, idx) => {
+      const isLast = idx === resPayments.length - 1;
+      const label = `Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)})${isLast ? ' [CE JOUR]' : ''}:`;
+      const val = `${Math.round(p.amount).toLocaleString('fr-FR')} FCFA`;
+      if (isLast) {
+        printer.bold(true).text(formatKeyValuePair(label, val)).bold(false);
+      } else {
+        printer.text(formatKeyValuePair(label, val));
+      }
+    });
+    const totalResPaid = resPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    printer.text('-'.repeat(48));
+    printer.text(formatKeyValuePair('TOTAL PAYÉ:', `${Math.round(totalResPaid).toLocaleString('fr-FR')} FCFA`));
+    printer.text(formatKeyValuePair('SOLDE RESTANT:', '0 FCFA'));
+    printer.text('='.repeat(48));
+    printer
+      .bold(true)
+      .size(2, 2)
+      .align('center')
+      .text('MONTANT PAYÉ CE JOUR')
+      .text(`${Math.round(lastResPayment.amount).toLocaleString('fr-FR')} FCFA`)
+      .size(1, 1)
+      .bold(false)
+      .align('left');
+    printer.text('='.repeat(48));
+  }
+
   printer
     .align('center')
     .text(' ')
+    .text('Un article vendu n\'est ni remboursable ni changeable')
     .text('Merci de votre visite !')
     .text('Fait par © TriSpark Digital')
     .feed(3)
@@ -1760,10 +1794,17 @@ function formatEscPosReservation(reservation, printer) {
   printer.text('HISTORIQUE DES VERSEMENTS:');
 
   const payments = reservation.payments || [];
+  const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+
   payments.forEach((p, idx) => {
-    const label = `Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)}):`;
+    const isLast = idx === payments.length - 1;
+    const label = `Tranche ${p.installmentNumber || idx + 1}/3 (${getPaymentMethodLabel(p.paymentMethod)})${isLast ? ' [CE JOUR]' : ''}:`;
     const val = `${Math.round(p.amount).toLocaleString('fr-FR')} FCFA`;
-    printer.text(formatKeyValuePair(label, val));
+    if (isLast) {
+      printer.bold(true).text(formatKeyValuePair(label, val)).bold(false);
+    } else {
+      printer.text(formatKeyValuePair(label, val));
+    }
   });
 
   const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -1771,14 +1812,25 @@ function formatEscPosReservation(reservation, printer) {
 
   printer.text('-'.repeat(48));
   printer.text(formatKeyValuePair('TOTAL DÉJÀ PAYÉ:', `${Math.round(totalPaid).toLocaleString('fr-FR')} FCFA`));
-  printer
-    .bold(true)
-    .text(formatKeyValuePair('RESTE À PAYER:', `${Math.round(remaining).toLocaleString('fr-FR')} FCFA`))
-    .bold(false);
+  printer.text(formatKeyValuePair('RESTE À PAYER:', `${Math.round(remaining).toLocaleString('fr-FR')} FCFA`));
+
+  if (lastPayment) {
+    printer.text('='.repeat(48));
+    printer
+      .bold(true)
+      .size(2, 2)
+      .align('center')
+      .text('MONTANT PAYÉ CE JOUR')
+      .text(`${Math.round(lastPayment.amount).toLocaleString('fr-FR')} FCFA`)
+      .size(1, 1)
+      .bold(false)
+      .align('left');
+  }
 
   printer
     .align('center')
     .text(' ')
+    .text('Un article vendu n\'est ni remboursable ni changeable')
     .text('Document Proforma de Réservation.')
     .text('La facture définitive est remise après solde complet.')
     .text('Merci pour votre confiance - JOEL SHOP')
