@@ -226,6 +226,96 @@ app.get('/api/clients', async (req, res) => {
   }
 });
 
+// GET /api/clients/stats - Liste tous les clients avec leurs statistiques d'achat
+// (Lecture seule — ne modifie aucune donnée)
+app.get('/api/clients/stats', async (req, res) => {
+  const { q } = req.query;
+  try {
+    // 1. Récupérer tous les clients connus
+    let clientWhere = {};
+    if (q && String(q).trim().length > 0) {
+      const search = String(q).trim();
+      clientWhere = {
+        OR: [
+          { name: { contains: search } },
+          { phone: { contains: search } }
+        ]
+      };
+    }
+
+    const clients = await prisma.client.findMany({
+      where: clientWhere,
+      orderBy: { name: 'asc' }
+    });
+
+    // 2. Pour chaque client, calculer les stats depuis les factures et réservations
+    const enriched = await Promise.all(clients.map(async (client) => {
+      const name = client.name;
+
+      // Factures validées directes (hors réservations converties en factures)
+      const invoices = await prisma.invoice.findMany({
+        where: {
+          status: 'VALIDATED',
+          isReservation: false,
+          OR: [
+            { clientName: { equals: name } },
+            { clientName: { startsWith: `${name} (` } }
+          ]
+        },
+        select: { totalAmount: true, createdAt: true, invoiceNumber: true }
+      });
+
+      // Réservations soldées correspondant à ce client
+      const reservations = await prisma.reservation.findMany({
+        where: {
+          status: 'COMPLETED',
+          clientName: { equals: name }
+        },
+        select: { totalAmount: true, createdAt: true, reservationNo: true }
+      });
+
+      // Réservations en cours (PENDING) — montant déjà payé en acomptes
+      const pendingReservations = await prisma.reservation.findMany({
+        where: {
+          status: 'PENDING',
+          clientName: { equals: name }
+        },
+        include: { payments: { select: { amount: true } } }
+      });
+
+      const invoiceTotal = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+      const reservationTotal = reservations.reduce((sum, r) => sum + r.totalAmount, 0);
+      const pendingPaid = pendingReservations.reduce((sum, r) =>
+        sum + r.payments.reduce((s, p) => s + p.amount, 0), 0);
+
+      const totalSpent = invoiceTotal + reservationTotal + pendingPaid;
+
+      // Date du dernier achat
+      const allDates = [
+        ...invoices.map(i => new Date(i.createdAt)),
+        ...reservations.map(r => new Date(r.createdAt)),
+        ...pendingReservations.map(r => new Date(r.createdAt))
+      ].sort((a, b) => b - a);
+
+      const lastPurchaseAt = allDates.length > 0 ? allDates[0].toISOString() : null;
+
+      return {
+        ...client,
+        invoiceCount: invoices.length,
+        reservationCount: reservations.length + pendingReservations.length,
+        totalSpent,
+        lastPurchaseAt
+      };
+    }));
+
+    res.json(enriched);
+  } catch (error) {
+    console.error('Get clients stats error:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des statistiques clients' });
+  }
+});
+
+
 // -------------------------------------------------------------
 // USERS & AUTHENTICATION
 // -------------------------------------------------------------
