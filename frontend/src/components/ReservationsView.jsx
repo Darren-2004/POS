@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight } from 'lucide-react';
 import Field, { inputCls } from './Field';
+import ClientAutocomplete from './ClientAutocomplete';
 import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
+
 
 export default function ReservationsView({ categories = [], currentUser, serverOnline }) {
   // Existing reservations list state
@@ -445,16 +447,17 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                 <div className="text-xs font-bold uppercase tracking-wider text-foreground/50">Informations Client</div>
                 <div className="grid sm:grid-cols-2 gap-3">
                   <Field label="Nom du Client">
-                    <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
-                      <input
-                        type="text"
-                        placeholder="Nom du client"
-                        value={clientName}
-                        onChange={(e) => setClientName(e.target.value)}
-                        className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
-                      />
-                    </div>
+                    <ClientAutocomplete
+                      placeholder="Nom du client"
+                      value={clientName}
+                      onChange={(val) => setClientName(val)}
+                      onSelectClient={(client) => {
+                        if (client.name) setClientName(client.name);
+                        if (client.phone) setClientPhone(client.phone);
+                      }}
+                      iconLeft={<User className="h-3.5 w-3.5 text-foreground/40" />}
+                      className={cx(inputCls, 'pl-8 bg-zinc-900 border-white/10 text-foreground text-xs font-semibold')}
+                    />
                   </Field>
 
                   <Field label="Numéro de Téléphone">

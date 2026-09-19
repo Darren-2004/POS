@@ -100,4 +100,13 @@ model ReservationPayment {
   createdBy         User        @relation("CreatedReservationPayments", fields: [createdById], references: [id])
 }
 
+model Client {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
 

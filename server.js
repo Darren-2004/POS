@@ -111,6 +111,122 @@ async function generateUniqueReservationNo(tx) {
 }
 
 // -------------------------------------------------------------
+// CLIENTS & AUTOCOMPLÉTION
+// -------------------------------------------------------------
+
+function parseClientInfo(rawName, rawPhone) {
+  let name = (rawName || '').trim();
+  let phone = (rawPhone || '').trim();
+
+  if (!name && !phone) return null;
+
+  if (name.includes('(') && name.includes(')')) {
+    const match = name.match(/^(.+?)\s*\((.+?)\)$/);
+    if (match) {
+      name = match[1].trim();
+      if (!phone) phone = match[2].trim();
+    }
+  }
+
+  const lowerName = name.toLowerCase();
+  if (!name || lowerName === 'client de passage' || lowerName === 'client anonyme') {
+    return null;
+  }
+
+  return { name, phone: phone || null };
+}
+
+async function upsertClient(rawName, rawPhone, db = prisma) {
+  try {
+    const parsed = parseClientInfo(rawName, rawPhone);
+    if (!parsed || !parsed.name) return null;
+
+    const existing = await db.client.findFirst({
+      where: { name: { equals: parsed.name } }
+    });
+
+    if (existing) {
+      if (parsed.phone && (!existing.phone || existing.phone !== parsed.phone)) {
+        return await db.client.update({
+          where: { id: existing.id },
+          data: { phone: parsed.phone }
+        });
+      }
+      return existing;
+    } else {
+      return await db.client.create({
+        data: {
+          name: parsed.name,
+          phone: parsed.phone
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Error in upsertClient:', err);
+    return null;
+  }
+}
+
+async function syncExistingClients() {
+  try {
+    console.log('🔄 Synchronisation initiale de la table Client...');
+    const invoices = await prisma.invoice.findMany({
+      where: { clientName: { not: null } },
+      select: { clientName: true }
+    });
+
+    for (const inv of invoices) {
+      if (inv.clientName) {
+        await upsertClient(inv.clientName, null);
+      }
+    }
+
+    const reservations = await prisma.reservation.findMany({
+      select: { clientName: true, clientPhone: true }
+    });
+
+    for (const res of reservations) {
+      if (res.clientName) {
+        await upsertClient(res.clientName, res.clientPhone);
+      }
+    }
+
+    const count = await prisma.client.count();
+    console.log(`✅ Synchronisation terminée: ${count} client(s) répertorié(s) dans la base.`);
+  } catch (err) {
+    console.error('❌ Échec de la synchronisation des clients:', err);
+  }
+}
+
+// GET /api/clients - Autocomplétion et recherche de clients
+app.get('/api/clients', async (req, res) => {
+  const { q } = req.query;
+  try {
+    let where = {};
+    if (q && String(q).trim().length > 0) {
+      const search = String(q).trim();
+      where = {
+        OR: [
+          { name: { contains: search } },
+          { phone: { contains: search } }
+        ]
+      };
+    }
+
+    const clients = await prisma.client.findMany({
+      where,
+      take: 20,
+      orderBy: { name: 'asc' }
+    });
+
+    res.json(clients);
+  } catch (error) {
+    console.error('Get clients error:', error);
+    res.status(500).json({ error: 'Erreur lors de la recherche des clients' });
+  }
+});
+
+// -------------------------------------------------------------
 // USERS & AUTHENTICATION
 // -------------------------------------------------------------
 
@@ -598,6 +714,10 @@ app.post('/api/invoices', async (req, res) => {
       });
     });
 
+    if (clientName) {
+      upsertClient(clientName, null).catch(err => console.error(err));
+    }
+
     res.status(201).json(newInvoice);
   } catch (error) {
     console.error(error);
@@ -902,6 +1022,10 @@ app.post('/api/reservations', async (req, res) => {
     const totalPaid = reservation.payments.reduce((sum, p) => sum + p.amount, 0);
     const remainingBalance = Math.max(0, reservation.totalAmount - totalPaid);
 
+    if (clientName) {
+      upsertClient(clientName, clientPhone).catch(err => console.error(err));
+    }
+
     res.status(201).json({
       ...reservation,
       totalPaid,
@@ -1090,6 +1214,10 @@ app.put('/api/reservations/:id', async (req, res) => {
 
     const totalPaid = updatedRes.payments.reduce((sum, p) => sum + p.amount, 0);
     const remainingBalance = Math.max(0, updatedRes.totalAmount - totalPaid);
+
+    if (clientName || clientPhone) {
+      upsertClient(clientName || updatedRes.clientName, clientPhone || updatedRes.clientPhone).catch(err => console.error(err));
+    }
 
     res.json({
       ...updatedRes,
@@ -2309,4 +2437,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
   console.log(`================================================`);
+  syncExistingClients().catch(err => console.error('Sync clients error:', err));
 });

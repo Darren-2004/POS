@@ -4,8 +4,10 @@ import Field, { inputCls } from '../components/Field';
 import ReservationsView from '../components/ReservationsView';
 import CashierInvoicesView from '../components/CashierInvoicesView';
 import CashierStatsView from '../components/CashierStatsView';
+import ClientAutocomplete from '../components/ClientAutocomplete';
 import { formatFCFA, triggerPrint, triggerProformaPrint, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
+
 
 export default function CashierView({ categories, currentUser, serverOnline, activeTab, setActiveTab }) {
   // activeTab/setActiveTab are lifted to App so Header can render the tabs
@@ -338,11 +340,14 @@ export default function CashierView({ categories, currentUser, serverOnline, act
             {/* Client Info Inputs: 2 inputs side-by-side */}
             <div className="mt-3 grid gap-3 sm:grid-cols-2 border-t border-white/10 pt-3">
               <Field label="Nom du client (Au moins 1 des 2 requis) *">
-                <input
-                  type="text"
+                <ClientAutocomplete
                   placeholder="Nom du client"
                   value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
+                  onChange={(val) => setClientName(val)}
+                  onSelectClient={(client) => {
+                    if (client.name) setClientName(client.name);
+                    if (client.phone) setClientPhone(client.phone);
+                  }}
                   className={cx(inputCls, 'bg-zinc-900 border-white/10 text-foreground text-xs font-medium')}
                 />
               </Field>
