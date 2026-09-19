@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { prisma } from './db.js';
 import { hashPin, verifyPin } from './authHelper.js';
+import { performDatabaseBackup, getBackupsList, scheduleAutomaticBackups } from './backupHelper.js';
 import ptp from 'pdf-to-printer';
 
 dotenv.config();
@@ -138,6 +139,7 @@ function parseClientInfo(rawName, rawPhone) {
 
 async function upsertClient(rawName, rawPhone, db = prisma) {
   try {
+    if (!db || !db.client) return null;
     const parsed = parseClientInfo(rawName, rawPhone);
     if (!parsed || !parsed.name) return null;
 
@@ -169,6 +171,10 @@ async function upsertClient(rawName, rawPhone, db = prisma) {
 
 async function syncExistingClients() {
   try {
+    if (!prisma.client) {
+      console.warn('⚠️ Table Client non générée dans Prisma Client. Exécutez "npx prisma generate".');
+      return;
+    }
     console.log('🔄 Synchronisation initiale de la table Client...');
     const invoices = await prisma.invoice.findMany({
       where: { clientName: { not: null } },
@@ -202,6 +208,7 @@ async function syncExistingClients() {
 app.get('/api/clients', async (req, res) => {
   const { q } = req.query;
   try {
+    if (!prisma.client) return res.json([]);
     let where = {};
     if (q && String(q).trim().length > 0) {
       const search = String(q).trim();
@@ -215,7 +222,7 @@ app.get('/api/clients', async (req, res) => {
 
     const clients = await prisma.client.findMany({
       where,
-      take: 20,
+      take: 10,
       orderBy: { name: 'asc' }
     });
 
@@ -231,6 +238,7 @@ app.get('/api/clients', async (req, res) => {
 app.get('/api/clients/stats', async (req, res) => {
   const { q } = req.query;
   try {
+    if (!prisma.client) return res.json([]);
     // 1. Récupérer tous les clients connus
     let clientWhere = {};
     if (q && String(q).trim().length > 0) {
@@ -2511,6 +2519,34 @@ app.get('/api/printers', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// -------------------------------------------------------------
+// GESTION DES SAUVEGARDES DE LA BASE DE DONNÉES
+// -------------------------------------------------------------
+// Récupérer la liste des sauvegardes enregistrées
+app.get('/api/admin/backups', async (req, res) => {
+  try {
+    const backups = await getBackupsList();
+    res.json(backups);
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la récupération des sauvegardes' });
+  }
+});
+
+// Déclencher manuellement une nouvelle sauvegarde
+app.post('/api/admin/backup', async (req, res) => {
+  try {
+    const filename = await performDatabaseBackup(true); // force = true
+    if (filename) {
+      res.json({ message: 'Sauvegarde créée avec succès', filename });
+    } else {
+      res.status(500).json({ error: 'Échec de la création de la sauvegarde' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la sauvegarde' });
+  }
+});
+
 // Servir les fichiers statiques générés par Vite
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 
@@ -2528,4 +2564,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
   console.log(`================================================`);
   syncExistingClients().catch(err => console.error('Sync clients error:', err));
+  scheduleAutomaticBackups();
 });
+
