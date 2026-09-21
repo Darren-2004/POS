@@ -331,6 +331,11 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
                             🏷️ Fin de Réservation
                           </span>
                         )}
+                        {inv.isDelivery && (
+                          <span className="mt-1 inline-block text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">
+                            🚚 Livraison
+                          </span>
+                        )}
                       </td>
                       {!previewInvoice && <td className="p-3 text-foreground/60 text-[11px]">{new Date(inv.createdAt).toLocaleString('fr-FR')}</td>}
                       <td className="p-3 font-medium text-[11px]">{inv.createdBy?.name || 'N/A'}</td>
@@ -401,6 +406,13 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
                 {previewInvoice.isReservation && (
                   <div className="bg-purple-100 border border-purple-300 text-purple-900 rounded-lg p-2 text-center text-xs font-bold">
                     🏷️ FIN DE RÉSERVATION ({previewInvoice.reservationNo || 'RÉSERVÉ'})
+                  </div>
+                )}
+                {previewInvoice.isDelivery && (
+                  <div className="bg-sky-100 border border-sky-300 text-sky-900 rounded-lg p-2 text-center text-xs font-bold">
+                    🚚  LIVRAISON COMPLETE ({previewInvoice.deliveryNo || previewInvoice.invoiceNumber})
+                    {previewInvoice.deliveryAddress && <div className="font-normal text-[11px] mt-0.5">📍 {previewInvoice.deliveryAddress}</div>}
+                    <div className="font-normal text-[11px] mt-0.5">Statut : {previewInvoice.deliveryStatus === 'DELIVERED' ? '✅ Livrée' : previewInvoice.deliveryStatus === 'IN_DELIVERY' ? '🚛 En cours' : '⏳ Enregistrée'}</div>
                   </div>
                 )}
 

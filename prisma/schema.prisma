@@ -42,8 +42,14 @@ model Invoice {
   totalAmount        Float
   paymentMethod      String        // "CASH", "ONLINE", "ORANGE_MONEY"
   clientName         String?
+  clientPhone        String?
   isReservation      Boolean       @default(false)
-  reservationNo     String?
+  reservationNo      String?
+  isDelivery         Boolean       @default(false)
+  deliveryNo         String?
+  deliveryAddress    String?
+  deliveryStatus     String?       // "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
+  deliveredAt        DateTime?
   status             String        @default("VALIDATED") // "VALIDATED", "CANCELLED"
   cancellationReason String?
   createdAt          DateTime      @default(now())

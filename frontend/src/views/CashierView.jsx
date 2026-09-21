@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Search, Clock, PlusCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Clock, PlusCircle, ChevronDown, ChevronUp, Truck, MapPin } from 'lucide-react';
 import Field, { inputCls } from '../components/Field';
 import ReservationsView from '../components/ReservationsView';
 import CashierInvoicesView from '../components/CashierInvoicesView';
 import CashierStatsView from '../components/CashierStatsView';
+import DeliveriesView from '../components/DeliveriesView';
 import ClientAutocomplete from '../components/ClientAutocomplete';
 import { formatFCFA, triggerPrint, triggerProformaPrint, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
@@ -42,6 +43,10 @@ export default function CashierView({ categories, currentUser, serverOnline, act
   // Reservation Mode state inside CashierView
   const [showReservationMode, setShowReservationMode] = useState(false);
   const [reservationAdvanceInput, setReservationAdvanceInput] = useState('');
+
+  // Delivery Mode state
+  const [showDeliveryMode, setShowDeliveryMode] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
 
   const [expandedCatIds, setExpandedCatIds] = useState([]);
 
@@ -189,6 +194,54 @@ export default function CashierView({ categories, currentUser, serverOnline, act
     }
   };
 
+  // Handler: Confirm delivery order
+  const handleConfirmDelivery = async () => {
+    if (cart.length === 0) return alert('Le panier est vide');
+    if (!clientName.trim() && !clientPhone.trim()) {
+      return alert('Veuillez renseigner au moins le nom du client ou son numéro de téléphone.');
+    }
+    const invalidLine = cart.find(item => isNaN(item.price) || item.price <= 0 || isNaN(item.qty) || item.qty < 1);
+    if (invalidLine) return alert(`Vérifiez la ligne "${invalidLine.categoryName}"`);
+    const targetTotal = getCartTotal();
+    if (!validateMultiplePayments(targetTotal)) return;
+
+    setIsSubmittingOrder(true);
+    try {
+      const res = await fetch(`${API_BASE}/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalAmount: targetTotal,
+          paymentMethod: getFinalPaymentMethod(),
+          items: getCartItemsForServer(),
+          createdById: currentUser.id,
+          clientName: clientName.trim() || null,
+          clientPhone: clientPhone.trim() || null,
+          isDelivery: true,
+          deliveryAddress: deliveryAddress.trim() || null,
+        })
+      });
+      const invoiceData = await res.json();
+      if (!res.ok) { alert(invoiceData.error || 'Erreur'); setIsSubmittingOrder(false); return; }
+      // Print immediately
+      triggerPrint(invoiceData);
+      window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
+      // Reset form
+      setCart([]);
+      setSelectedMethods(['CASH']);
+      setMethodAmounts({ CASH: '', ONLINE: '', ORANGE_MONEY: '' });
+      setClientName('');
+      setClientPhone('');
+      setDeliveryAddress('');
+      setShowDeliveryMode(false);
+      setIsSubmittingOrder(false);
+      // Stay on sales page (do not switch tabs)
+    } catch {
+      alert('Erreur réseau');
+      setIsSubmittingOrder(false);
+    }
+  };
+
   const filteredCategories = categories.filter(c => {
     const q = categorySearch.toLowerCase();
     if (!q) return true;
@@ -205,6 +258,8 @@ export default function CashierView({ categories, currentUser, serverOnline, act
         <CashierInvoicesView currentUser={currentUser} serverOnline={serverOnline} />
       ) : activeTab === 'stats' ? (
         <CashierStatsView currentUser={currentUser} serverOnline={serverOnline} />
+      ) : activeTab === 'deliveries' ? (
+        <DeliveriesView currentUser={currentUser} />
       ) : (
         <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
           <div className="flex w-72 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5">
@@ -462,6 +517,65 @@ export default function CashierView({ categories, currentUser, serverOnline, act
               </div>
             )}
 
+            {/* Inline Delivery Mode Panel */}
+            {showDeliveryMode && (
+              <div className="mt-3 p-4 bg-sky-950/40 border-2 border-sky-500/50 rounded-2xl space-y-3 animate-in fade-in duration-200">
+                <div className="text-xs font-black text-sky-300 uppercase tracking-wider flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Truck className="h-4 w-4 text-sky-400" />
+                    <span>Mode Livraison — Adresse optionnelle</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeliveryMode(false);
+                      setDeliveryAddress('');
+                    }}
+                    className="rounded-lg px-2.5 py-1 bg-white/10 text-white hover:bg-white/20 text-xs font-bold transition cursor-pointer"
+                  >
+                    ✕ Annuler la livraison
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-[10px] uppercase font-bold text-sky-300/80 mb-1 block flex items-center gap-1">
+                      <MapPin className="h-3 w-3" /> Adresse de livraison (optionnel)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Rue des Fleurs, Quartier Nord..."
+                      value={deliveryAddress}
+                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      className={cx(inputCls, 'bg-zinc-900 border-sky-400/60 text-foreground focus:border-sky-400')}
+                    />
+                  </div>
+                  <div className="self-end">
+                    <button
+                      type="button"
+                      onClick={handleConfirmDelivery}
+                      disabled={isSubmittingOrder || (!clientName.trim() && !clientPhone.trim()) || !serverOnline}
+                      className="rounded-xl bg-sky-500 px-6 py-3 text-xs font-black text-white hover:bg-sky-400 disabled:opacity-30 transition cursor-pointer shadow-lg shadow-sky-500/20 flex items-center gap-2"
+                    >
+                      <Truck className="h-4 w-4" />
+                      <span>{isSubmittingOrder ? 'Enregistrement...' : 'Valider & Imprimer Bon'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1 text-[11px] font-semibold">
+                  {(!clientName.trim() && !clientPhone.trim()) && (
+                    <div className="text-amber-400 flex items-center gap-1">
+                      ⚠ Le nom du client ou le téléphone est obligatoire pour la livraison.
+                    </div>
+                  )}
+                  <div className="text-sky-300/80 italic">
+                    ℹ La livraison sera enregistrée et le bon imprimé immédiatement. Elle n'entrera dans la comptabilité qu'au passage au statut "Livrée".
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Inline Reservation Advance Panel if activated */}
             {showReservationMode && (
               <div className="mt-3 p-4 bg-purple-950/40 border-2 border-purple-500/50 rounded-2xl space-y-3 animate-in fade-in duration-200">
@@ -537,13 +651,35 @@ export default function CashierView({ categories, currentUser, serverOnline, act
                 <div className="text-2xl font-black text-gold">{formatFCFA(getCartTotal())}</div>
               </div>
 
-              <div className="flex items-center gap-3">
-                {/* Button 1: Créer Réservation (Distinct Purple Color) */}
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Button: Créer Livraison (Sky/Blue) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (cart.length === 0) return alert('Le panier est vide');
+                    setShowDeliveryMode(true);
+                    setShowReservationMode(false);
+                  }}
+                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showDeliveryMode}
+                  className={cx(
+                    'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
+                    showDeliveryMode
+                      ? 'bg-sky-900/50 text-sky-300 border border-sky-500/40 opacity-80 cursor-not-allowed'
+                      : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-600/20 border border-sky-400/30 disabled:opacity-40'
+                  )}
+                  title="Créer une commande de livraison"
+                >
+                  <Truck className="h-4 w-4" />
+                  <span>{showDeliveryMode ? 'Mode Livraison Actif' : 'Créer Livraison'}</span>
+                </button>
+
+                {/* Button: Créer Réservation (Distinct Purple Color) */}
                 <button
                   type="button"
                   onClick={() => {
                     if (cart.length === 0) return alert('Le panier est vide');
                     setShowReservationMode(true);
+                    setShowDeliveryMode(false);
                   }}
                   disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
                   className={cx(
@@ -558,18 +694,18 @@ export default function CashierView({ categories, currentUser, serverOnline, act
                   <span>{showReservationMode ? 'Mode Réservation Actif' : 'Créer Réservation'}</span>
                 </button>
 
-                {/* Button 2: Valider Ticket (Distinct Emerald Green Color, Disabled during reservation mode) */}
+                {/* Button: Valider Ticket (Distinct Emerald Green Color, Disabled during reservation/delivery mode) */}
                 <button
                   type="button"
                   onClick={handleValidateAndPrint}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
+                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode || showDeliveryMode}
                   className={cx(
                     'rounded-2xl py-3 px-8 text-xs font-black transition shadow-lg cursor-pointer',
-                    showReservationMode
+                    (showReservationMode || showDeliveryMode)
                       ? 'bg-zinc-800 text-foreground/30 border border-white/10 opacity-30 cursor-not-allowed'
                       : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20 disabled:opacity-40'
                   )}
-                  title={showReservationMode ? 'Désactivé pendant la création de réservation' : 'Valider la vente directe'}
+                  title={(showReservationMode || showDeliveryMode) ? 'Désactivé pendant ce mode' : 'Valider la vente directe'}
                 >
                   {isSubmittingOrder ? 'Enregistrement...' : 'Valider Ticket'}
                 </button>

@@ -177,6 +177,11 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
                           🏷️ Fin Réservation
                         </span>
                       )}
+                      {inv.isDelivery && (
+                        <span className="text-[9px] font-bold text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded border border-sky-500/30">
+                          🚚 Livraison
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-foreground/60 text-[11px]">
                       {new Date(inv.createdAt).toLocaleString('fr-FR')}

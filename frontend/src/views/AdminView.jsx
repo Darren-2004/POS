@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BarChart3, User as UserIcon, Settings, Award, Clock, Users as UsersIcon } from 'lucide-react';
+import { BarChart3, User as UserIcon, Settings, Award, Clock, Users as UsersIcon, Truck } from 'lucide-react';
 import { triggerPrint, cx } from '../utils/helpers';
 import Dashboard from './admin/Dashboard';
 import Users from './admin/Users';
@@ -7,6 +7,7 @@ import CategoriesView from './admin/Categories';
 import ZReportView from './admin/ZReport';
 import ReservationsPanel from './admin/ReservationsPanel';
 import ClientsPanel from './admin/ClientsPanel';
+import DeliveriesPanel from './admin/DeliveriesPanel';
 import { API_BASE } from '../utils/constants';
 
 export default function AdminView({ currentUser, users, categories, fetchUsers, fetchCategories }) {
@@ -129,6 +130,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
 
   const adminTabs = [
     { id: 'dashboard', label: 'Tableau', icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'deliveries', label: 'Livraisons', icon: <Truck className="h-4 w-4" /> },
     { id: 'reservations', label: 'Réservations', icon: <Clock className="h-4 w-4" /> },
     { id: 'clients', label: 'Clients', icon: <UsersIcon className="h-4 w-4" /> },
     { id: 'users', label: 'Caissières', icon: <UserIcon className="h-4 w-4" /> },
@@ -177,6 +179,10 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
               fetchInvoices={fetchInvoices}
               loading={dashboardLoading}
             />
+          )}
+
+          {adminTab === 'deliveries' && (
+            <DeliveriesPanel currentUser={currentUser} />
           )}
 
           {adminTab === 'reservations' && (

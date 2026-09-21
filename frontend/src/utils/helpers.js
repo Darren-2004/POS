@@ -149,6 +149,12 @@ export const triggerPrint = (invoiceData) => {
   const hasName = clientNameOnly && clientNameOnly !== 'Client de passage';
   const hasPhone = Boolean(clientPhoneStr);
 
+  const isDelivery = invoiceData.isDelivery;
+  let deliveryStatusLabel = 'ENREGISTRÉE';
+  if (invoiceData.deliveryStatus === 'IN_DELIVERY') deliveryStatusLabel = 'EN COURS DE LIVRAISON';
+  else if (invoiceData.deliveryStatus === 'DELIVERED') deliveryStatusLabel = 'LIVRÉE';
+  else if (invoiceData.deliveryStatus === 'CANCELLED') deliveryStatusLabel = 'ANNULÉE';
+
   const printHTML = isZ ? `
     <div style="text-align:center;margin-bottom:8px;">
       <h2 style="margin:0;font-size:16pt;letter-spacing:2px;">JOEL SHOP</h2>
@@ -179,15 +185,20 @@ export const triggerPrint = (invoiceData) => {
   ` : `
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
-      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">─── TICKET DE CAISSE ───</p>
+      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">${isDelivery ? '─── BON DE LIVRAISON ───' : '─── TICKET DE CAISSE ───'}</p>
       <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
-        <span>N° Ticket:</span>
-        <span style="font-weight:bold;word-break:break-all;">${invoiceData.invoiceNumber}</span>
+        <span>N° ${isDelivery ? 'Livraison' : 'Ticket'}:</span>
+        <span style="font-weight:bold;word-break:break-all;">${isDelivery && invoiceData.deliveryNo ? invoiceData.deliveryNo : invoiceData.invoiceNumber}</span>
       </div>
+      ${isDelivery ? `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
+        <span>Statut Livraison:</span>
+        <span style="font-weight:bold;border:1px solid #000;padding:0 3px;">${deliveryStatusLabel}</span>
+      </div>` : ''}
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Date:</span><span style="white-space:nowrap;">${new Date(invoiceData.createdAt).toLocaleString('fr-FR')}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;"><span>Caissière:</span><span style="word-break:break-word;">${invoiceData.createdBy?.name || 'Caissière'}</span></div>
       ${renderPaymentMethodHTML(invoiceData.paymentMethod)}
@@ -200,6 +211,11 @@ export const triggerPrint = (invoiceData) => {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
         <span>Tél client:</span>
         <span style="font-weight:bold;word-break:break-all;text-align:right;">${clientPhoneStr}</span>
+      </div>` : ''}
+      ${isDelivery && invoiceData.deliveryAddress ? `
+      <div style="margin:4px 0;padding:3px;border:1px dashed #000;font-size:8.5pt;">
+        <span>Adresse livraison:</span>
+        <div style="font-weight:bold;word-break:break-word;margin-top:1px;">${invoiceData.deliveryAddress}</div>
       </div>` : ''}
     </div>
     <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>

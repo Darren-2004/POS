@@ -78,6 +78,41 @@ async function generateUniqueInvoiceNumber(tx) {
   return candidate;
 }
 
+// Helper: generate guaranteed unique delivery number LIV-YYYYMMDD-XXXX
+async function generateUniqueDeliveryNumber(tx) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const prefix = `LIV-${year}${month}${day}-`;
+
+  const todayDeliveries = await tx.invoice.findMany({
+    where: { deliveryNo: { startsWith: prefix } },
+    select: { deliveryNo: true }
+  });
+
+  let maxSeq = 0;
+  todayDeliveries.forEach(inv => {
+    if (inv.deliveryNo) {
+      const parts = inv.deliveryNo.split('-');
+      const seqNum = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(seqNum) && seqNum > maxSeq) {
+        maxSeq = seqNum;
+      }
+    }
+  });
+
+  let nextSeq = maxSeq + 1;
+  let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+
+  while (await tx.invoice.findFirst({ where: { deliveryNo: candidate } })) {
+    nextSeq++;
+    candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  return candidate;
+}
+
 // Helper: generate guaranteed unique reservation number RES-YYYYMMDD-XXXX
 async function generateUniqueReservationNo(tx) {
   const now = new Date();
@@ -729,27 +764,41 @@ app.delete('/api/subcategories/:id', async (req, res) => {
 
 // Liste des factures avec filtres
 app.get('/api/invoices', async (req, res) => {
-  const { date, cashierId, status } = req.query;
+  const { date, cashierId, status, includeAllDeliveries } = req.query;
 
-  let where = {};
+  const AND = [];
 
   if (date) {
     const range = localDayRange(date);
     if (range) {
-      where.createdAt = {
-        gte: range.start,
-        lte: range.end
-      };
+      AND.push({
+        createdAt: {
+          gte: range.start,
+          lte: range.end
+        }
+      });
     }
   }
 
   if (cashierId) {
-    where.createdById = cashierId;
+    AND.push({ createdById: cashierId });
   }
 
   if (status) {
-    where.status = status;
+    AND.push({ status: status });
   }
+
+  // Tant qu'une livraison n'est pas livrée, sa facture ne doit pas apparaître dans les factures générales / comptabilité / dashboard admin
+  if (includeAllDeliveries !== 'true') {
+    AND.push({
+      OR: [
+        { isDelivery: false },
+        { isDelivery: true, deliveryStatus: 'DELIVERED' }
+      ]
+    });
+  }
+
+  const where = AND.length > 0 ? { AND } : {};
 
   try {
     const invoices = await prisma.invoice.findMany({
@@ -773,12 +822,26 @@ app.get('/api/invoices', async (req, res) => {
   }
 });
 
-// Créer une facture (Validation de panier)
+// Créer une facture (Validation de panier ou de livraison)
 app.post('/api/invoices', async (req, res) => {
-  const { totalAmount, paymentMethod, items, createdById, clientName } = req.body;
+  const {
+    totalAmount,
+    paymentMethod,
+    items,
+    createdById,
+    clientName,
+    clientPhone,
+    isDelivery,
+    deliveryAddress
+  } = req.body;
 
   if (!items || !items.length || !createdById) {
     return res.status(400).json({ error: 'Données de la facture incomplètes' });
+  }
+
+  // Validation: Pour une livraison, le nom OU le téléphone doit être renseigné
+  if (isDelivery && !String(clientName || '').trim() && !String(clientPhone || '').trim()) {
+    return res.status(400).json({ error: 'Pour une livraison, au moins le nom ou le téléphone du client est requis' });
   }
 
   const finalPaymentMethod = paymentMethod || 'CASH';
@@ -787,6 +850,7 @@ app.post('/api/invoices', async (req, res) => {
     // Utiliser une transaction Prisma pour garantir la concurrence et le format séquentiel sans doublons
     const newInvoice = await prisma.$transaction(async (tx) => {
       const invoiceNumber = await generateUniqueInvoiceNumber(tx);
+      const deliveryNo = isDelivery ? await generateUniqueDeliveryNumber(tx) : null;
 
       // Création de la facture et de ses éléments
       return await tx.invoice.create({
@@ -795,6 +859,11 @@ app.post('/api/invoices', async (req, res) => {
           totalAmount: parseFloat(totalAmount),
           paymentMethod: finalPaymentMethod,
           clientName: clientName ? String(clientName).trim() : null,
+          clientPhone: clientPhone ? String(clientPhone).trim() : null,
+          isDelivery: Boolean(isDelivery),
+          deliveryNo,
+          deliveryAddress: deliveryAddress ? String(deliveryAddress).trim() : null,
+          deliveryStatus: isDelivery ? 'PENDING' : null,
           createdById,
           items: {
             create: items.map(item => ({
@@ -812,8 +881,8 @@ app.post('/api/invoices', async (req, res) => {
       });
     });
 
-    if (clientName) {
-      upsertClient(clientName, null).catch(err => console.error(err));
+    if (clientName || clientPhone) {
+      upsertClient(clientName, clientPhone).catch(err => console.error(err));
     }
 
     res.status(201).json(newInvoice);
@@ -916,6 +985,152 @@ app.post('/api/invoices/:id/cancel', async (req, res) => {
     res.json(updatedInvoice);
   } catch (error) {
     res.status(500).json({ error: 'Erreur lors de l\'annulation de la facture' });
+  }
+});
+
+// -------------------------------------------------------------
+// GESTION DES LIVRAISONS
+// -------------------------------------------------------------
+
+// GET /api/deliveries - Liste des factures de livraison
+app.get('/api/deliveries', async (req, res) => {
+  const { status, date, cashierId, q } = req.query;
+  try {
+    const where = { isDelivery: true };
+
+    if (status && status !== 'ALL') {
+      where.deliveryStatus = status; // "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
+    }
+
+    if (cashierId) {
+      where.createdById = cashierId;
+    }
+
+    if (date) {
+      const range = localDayRange(date);
+      if (range) {
+        where.createdAt = { gte: range.start, lte: range.end };
+      }
+    }
+
+    if (q && String(q).trim().length > 0) {
+      const search = String(q).trim();
+      where.OR = [
+        { clientName: { contains: search } },
+        { clientPhone: { contains: search } },
+        { deliveryNo: { contains: search } },
+        { deliveryAddress: { contains: search } },
+        { invoiceNumber: { contains: search } }
+      ];
+    }
+
+    const deliveries = await prisma.invoice.findMany({
+      where,
+      include: {
+        items: true,
+        createdBy: { select: { id: true, name: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(deliveries);
+  } catch (error) {
+    console.error('Get deliveries error:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des livraisons' });
+  }
+});
+
+// PUT /api/deliveries/:id/status - Mettre à jour le statut d'une livraison
+app.put('/api/deliveries/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status, paymentMethod } = req.body; // status: "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
+
+  if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
+    return res.status(400).json({ error: 'Statut de livraison invalide' });
+  }
+
+  try {
+    const updateData = {
+      deliveryStatus: status
+    };
+
+    if (status === 'DELIVERED') {
+      updateData.deliveredAt = new Date();
+      if (paymentMethod) {
+        updateData.paymentMethod = paymentMethod;
+      }
+    } else if (status === 'CANCELLED') {
+      updateData.status = 'CANCELLED';
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: updateData,
+      include: {
+        items: true,
+        createdBy: { select: { id: true, name: true } }
+      }
+    });
+
+    if (updated.clientName || updated.clientPhone) {
+      upsertClient(updated.clientName, updated.clientPhone).catch(() => {});
+    }
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Update delivery status error:', error);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de la livraison' });
+  }
+});
+
+// POST /api/deliveries/bulk-status - Mise à jour en masse (lot) de plusieurs livraisons
+app.post('/api/deliveries/bulk-status', async (req, res) => {
+  const { ids, status, paymentMethod } = req.body;
+
+  if (!ids || !Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: 'Liste d\'identifiants requise' });
+  }
+
+  if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
+    return res.status(400).json({ error: 'Statut de livraison invalide' });
+  }
+
+  try {
+    const updateData = { deliveryStatus: status };
+
+    if (status === 'DELIVERED') {
+      updateData.deliveredAt = new Date();
+      if (paymentMethod) {
+        updateData.paymentMethod = paymentMethod;
+      }
+    } else if (status === 'CANCELLED') {
+      updateData.status = 'CANCELLED';
+    }
+
+    await prisma.invoice.updateMany({
+      where: { id: { in: ids }, isDelivery: true },
+      data: updateData
+    });
+
+    const updatedInvoices = await prisma.invoice.findMany({
+      where: { id: { in: ids } },
+      include: {
+        items: true,
+        createdBy: { select: { id: true, name: true } }
+      }
+    });
+
+    // Optionnel: enregistrer les clients
+    updatedInvoices.forEach(inv => {
+      if (inv.clientName || inv.clientPhone) {
+        upsertClient(inv.clientName, inv.clientPhone).catch(() => {});
+      }
+    });
+
+    res.json({ message: `${updatedInvoices.length} livraison(s) mise(s) à jour`, deliveries: updatedInvoices });
+  } catch (error) {
+    console.error('Bulk update delivery status error:', error);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour par lot des livraisons' });
   }
 });
 
@@ -1483,8 +1698,11 @@ app.get('/api/z-report', async (req, res) => {
     let payments = { CASH: 0, ONLINE: 0, ORANGE_MONEY: 0 };
 
     invoices.forEach(inv => {
-      // Exclude reservation final invoices from cash summation to prevent double counting
+      // Exclude reservation final invoices and non-delivered delivery invoices from cash summation
       if (!inv.isReservation) {
+        if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+          return;
+        }
         total += inv.totalAmount;
         const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
         payments.CASH += breakdown.CASH;
@@ -1505,6 +1723,11 @@ app.get('/api/z-report', async (req, res) => {
       where: {
         invoice: {
           status: 'VALIDATED',
+          isReservation: false,
+          OR: [
+            { isDelivery: false },
+            { deliveryStatus: 'DELIVERED' }
+          ],
           createdAt: { gte: start, lte: end },
           ...(cashierId ? { createdById: cashierId } : {})
         }
@@ -1587,6 +1810,9 @@ app.get('/api/stats', async (req, res) => {
 
       invoices.forEach(inv => {
         if (!inv.isReservation) {
+          if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+            return;
+          }
           count++;
           total += inv.totalAmount;
           const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
@@ -1673,6 +1899,9 @@ app.get('/api/stats', async (req, res) => {
 
         allInvoices.forEach(inv => {
           if (!inv.isReservation) {
+            if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+              return;
+            }
             count++;
             total += inv.totalAmount;
             const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);

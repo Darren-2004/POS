@@ -21,6 +21,4 @@ prisma/*.sqlite3
 
 # Generated print jobs
 print_jobs/
-dist/
-build/  
  

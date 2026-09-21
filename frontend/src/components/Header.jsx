@@ -1,10 +1,11 @@
 import React from 'react';
-import { ShoppingCart, Shield, Lock, ShoppingBag, Clock, Receipt, BarChart2 } from 'lucide-react';
+import { ShoppingCart, Shield, Lock, ShoppingBag, Clock, Receipt, BarChart2, Truck } from 'lucide-react';
 import IconButton from './IconButton';
 import { cx } from '../utils/helpers';
 
 const CASHIER_TABS = [
   { key: 'sale',         label: 'Vente Directe',        icon: ShoppingBag },
+  { key: 'deliveries',   label: 'Livraisons',           icon: Truck },
   { key: 'reservations', label: 'Réservations',          icon: Clock },
   { key: 'my_invoices',  label: 'Mes Ventes',            icon: Receipt },
   { key: 'stats',        label: 'Tableau de Bord',       icon: BarChart2 },
