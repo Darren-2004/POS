@@ -1035,8 +1035,8 @@ app.get('/api/deliveries', async (req, res) => {
 
     res.json(deliveries);
   } catch (error) {
-    console.error('Get deliveries error:', error);
-    res.status(500).json({ error: 'Erreur lors de la récupération des livraisons' });
+    console.error('Get deliveries error:', error.message);
+    res.json([]);
   }
 });
 
@@ -2432,124 +2432,111 @@ async function printEscPosDirect(body) {
 }
 
 // Endpoint de réception des jobs d'impression (demo)
-app.post('/api/print', async (req, res) => {
+// ─────────────────────────────────────────────────────────
+// FILE D'ATTENTE D'IMPRESSION (PRINT QUEUE)
+// Permet de gérer les demandes d'impression simultanées de plusieurs caisses
+// ─────────────────────────────────────────────────────────
+const printQueue = [];
+let isProcessingPrintQueue = false;
+
+async function executeSinglePrintJob(body) {
+  // Try direct ESC/POS raw print if configured
   try {
-    const now = Date.now();
-    if (now - lastServerPrintTimestamp < 2500) {
-      console.log('Ignored duplicate print request (throttled)');
-      return res.json({ ok: true, message: 'Print request throttled' });
+    const printedDirectly = await printEscPosDirect(body);
+    if (printedDirectly) {
+      return { ok: true, message: 'Printed directly via ESC/POS' };
     }
-    lastServerPrintTimestamp = now;
+  } catch (escPosErr) {
+    console.warn("⚠️ ESC/POS printing failed, falling back to PDF/Spooler method:", escPosErr.message);
+  }
 
-    // Try direct ESC/POS raw print if configured
-    try {
-      const printedDirectly = await printEscPosDirect(req.body);
-      if (printedDirectly) {
-        return res.json({ ok: true, message: 'Printed directly via ESC/POS' });
-      }
-    } catch (escPosErr) {
-      console.warn("⚠️ ESC/POS printing failed, falling back to PDF/Spooler method:", escPosErr.message);
-    }
+  const { html } = body || {};
+  if (!html) throw new Error('No html provided');
 
-    const { html } = req.body || {};
-    if (!html) return res.status(400).json({ error: 'No html provided' });
+  const outDir = path.join(__dirname, 'print_jobs');
+  await fs.mkdir(outDir, { recursive: true });
+  const timestamp = Date.now();
+  const htmlPath = path.join(outDir, `print_${timestamp}.html`);
+  const pdfPath  = path.join(outDir, `print_${timestamp}.pdf`);
+  await fs.writeFile(htmlPath, html, 'utf8');
 
-    const outDir = path.join(__dirname, 'print_jobs');
-    await fs.mkdir(outDir, { recursive: true });
-    const timestamp = Date.now();
-    const htmlPath = path.join(outDir, `print_${timestamp}.html`);
-    const pdfPath  = path.join(outDir, `print_${timestamp}.pdf`);
-    await fs.writeFile(htmlPath, html, 'utf8');
+  console.log('Saved print job to', htmlPath);
 
-    console.log('Saved print job to', htmlPath);
-
+  return new Promise((resolve) => {
     if (process.platform === 'linux') {
-      // ─────────────────────────────────────────────────────────
-      // CONFIGURATION RÉSEAU : variables disponibles dans .env
-      //   PRINTER_IP   = Adresse IP réseau de l'imprimante
-      //                  (ex: 192.168.1.150) — obligatoire pour impression réseau
-      //   PRINTER_PORT = Port IPP de l'imprimante (défaut: 631)
-      //   PRINTER_NAME = Nom de file CUPS (optionnel, si déjà configuré dans CUPS)
-      // ─────────────────────────────────────────────────────────
       const printerIp   = (process.env.PRINTER_IP   || '').trim();
       const printerPort = (process.env.PRINTER_PORT  || '631').trim();
       const printerName = (process.env.PRINTER_NAME  || '').trim();
 
-      // Detect available Chrome/Chromium binary
       const chromeBins = ['google-chrome', 'chromium', 'chromium-browser'];
       let chromeBin = process.env.CHROME_BIN || null;
-      if (!chromeBin) {
-        const { execSync } = await import('child_process');
-        for (const bin of chromeBins) {
+
+      const runLinuxPrint = async () => {
+        if (!chromeBin) {
           try {
-            const found = execSync(`which ${bin} 2>/dev/null`).toString().trim();
-            if (found) { chromeBin = found; break; }
-          } catch { /* not found */ }
+            const { execSync } = await import('child_process');
+            for (const bin of chromeBins) {
+              try {
+                const found = execSync(`which ${bin} 2>/dev/null`).toString().trim();
+                if (found) { chromeBin = found; break; }
+              } catch { /* not found */ }
+            }
+          } catch { /* ignore */ }
         }
-      }
 
-      if (chromeBin) {
-        // Étape 1 : Chrome génère le PDF
-        const chromeCmd = [
-          `"${chromeBin}"`,
-          '--headless=new',
-          '--no-sandbox',
-          '--disable-gpu',
-          '--run-all-compositor-stages-before-draw',
-          '--virtual-time-budget=5000',
-          `--print-to-pdf="${pdfPath}"`,
-          '--print-to-pdf-no-header',
-          '--no-pdf-header-footer',
-          `"file://${htmlPath}"`,
-          '2>/dev/null'
-        ].join(' ');
+        if (chromeBin) {
+          const chromeCmd = [
+            `"${chromeBin}"`,
+            '--headless=new',
+            '--no-sandbox',
+            '--disable-gpu',
+            '--run-all-compositor-stages-before-draw',
+            '--virtual-time-budget=5000',
+            `--print-to-pdf="${pdfPath}"`,
+            '--print-to-pdf-no-header',
+            '--no-pdf-header-footer',
+            `"file://${htmlPath}"`,
+            '2>/dev/null'
+          ].join(' ');
 
-        exec(chromeCmd, (chromeErr) => {
-          if (chromeErr) {
-            console.error('❌ [LINUX] Échec génération PDF par Chrome:', chromeErr.message);
-            return;
-          }
-          console.log('✅ [LINUX] PDF généré :', pdfPath);
-
-          // Étape 2 : Envoi vers l'imprimante (réseau IP ou CUPS local)
-          let lpCmd;
-
-          if (printerIp) {
-            // ── IMPRESSION RÉSEAU via IPP (PRINTER_IP défini dans .env) ──
-            // Fonctionnement : lp envoie le PDF directement sur l'IP réseau de l'imprimante
-            // sans avoir besoin de la configurer dans CUPS au préalable.
-            console.log(`🖨️ [LINUX RÉSEAU] Envoi vers ${printerIp}:${printerPort} ...`);
-            if (printerName) {
-              // IPP avec nom de file spécifique : ipp://IP:PORT/printers/NOM
-              lpCmd = `lp -h "${printerIp}:${printerPort}" -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
-            } else {
-              // IPP direct sur l'imprimante par défaut exposée par l'hôte distant
-              lpCmd = `lp -h "${printerIp}:${printerPort}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+          exec(chromeCmd, (chromeErr) => {
+            if (chromeErr) {
+              console.error('❌ [LINUX] Échec génération PDF par Chrome:', chromeErr.message);
+              return resolve({ ok: false, error: chromeErr.message });
             }
-          } else if (printerName) {
-            // ── IMPRESSION CUPS LOCAL (PRINTER_NAME défini dans .env) ──
-            console.log(`🖨️ [LINUX CUPS] Envoi vers la file CUPS : ${printerName} ...`);
-            lpCmd = `lp -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
-          } else {
-            // ── IMPRIMANTE PAR DÉFAUT CUPS (aucune config) ──
-            console.log(`🖨️ [LINUX] Envoi vers l'imprimante CUPS par défaut ...`);
-            lpCmd = `lp -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
-          }
+            console.log('✅ [LINUX] PDF généré :', pdfPath);
 
-          exec(lpCmd, (lpErr) => {
-            if (lpErr) {
-              console.error(`❌ [LINUX] Échec impression (${lpCmd}) :`, lpErr.message);
+            let lpCmd;
+            if (printerIp) {
+              if (printerName) {
+                lpCmd = `lp -h "${printerIp}:${printerPort}" -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+              } else {
+                lpCmd = `lp -h "${printerIp}:${printerPort}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
+              }
+            } else if (printerName) {
+              lpCmd = `lp -d "${printerName}" -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
             } else {
-              const dest = printerIp ? `${printerIp}:${printerPort}` : (printerName || 'imprimante par défaut');
-              console.log(`✅ [LINUX] Ticket envoyé avec succès vers ${dest}`);
+              lpCmd = `lp -o fit-to-page -o sides=one-sided "${pdfPath}" 2>/dev/null`;
             }
+
+            exec(lpCmd, (lpErr) => {
+              if (lpErr) {
+                console.error(`❌ [LINUX] Échec impression (${lpCmd}) :`, lpErr.message);
+                resolve({ ok: false, error: lpErr.message });
+              } else {
+                const dest = printerIp ? `${printerIp}:${printerPort}` : (printerName || 'imprimante par défaut');
+                console.log(`✅ [LINUX] Ticket envoyé avec succès vers ${dest}`);
+                resolve({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
+              }
+            });
           });
-        });
+        } else {
+          console.warn('⚠️ [LINUX] Aucun Chrome/Chromium trouvé.');
+          resolve({ ok: false, error: 'No chrome binary found on Linux' });
+        }
+      };
 
-      } else {
-        console.warn('⚠️ [LINUX] Aucun Chrome/Chromium trouvé. Installez-le via : sudo apt-get install -y google-chrome-stable');
-      }
-
+      runLinuxPrint();
     } else if (process.platform === 'win32') {
       const localAppData = process.env.LOCALAPPDATA || '';
       const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
@@ -2564,7 +2551,6 @@ app.post('/api/print', async (req, res) => {
         `${systemDrive}\\Program Files\\Google\\Chrome\\Application\\chrome.exe`,
         `${systemDrive}\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe`,
         `${systemDrive}\\ProgramData\\Google\\Chrome\\Application\\chrome.exe`,
-        // Edge is built into Windows 10/11 PCs
         path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
         path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
       ].filter(Boolean);
@@ -2573,155 +2559,125 @@ app.post('/api/print', async (req, res) => {
         try { return existsSync(p); } catch { return false; }
       });
 
-      if (!browserBin) {
-        const { execSync } = await import('child_process');
-        for (const cmd of ['where chrome 2>NUL', 'where msedge 2>NUL']) {
+      const runWinPrint = async () => {
+        if (!browserBin) {
           try {
-            const found = execSync(cmd).toString().split(/[\r\n]+/)[0].trim();
-            if (found && found.endsWith('.exe')) { browserBin = found; break; }
+            const { execSync } = await import('child_process');
+            for (const cmd of ['where chrome 2>NUL', 'where msedge 2>NUL']) {
+              try {
+                const found = execSync(cmd).toString().split(/[\r\n]+/)[0].trim();
+                if (found && found.endsWith('.exe')) { browserBin = found; break; }
+              } catch { /* ignore */ }
+            }
           } catch { /* ignore */ }
         }
-      }
 
-      if (browserBin) {
-        // ─────────────────────────────────────────────────────────
-        // CONFIGURATION RÉSEAU WINDOWS : variables dans .env
-        //   PRINTER_IP   = IP réseau de l'imprimante (ex: 192.168.1.150)
-        //   PRINTER_PORT = Port IPP (défaut: 631)
-        //   PRINTER_NAME = Nom de l'imprimante dans Windows Spooler
-        //
-        // Logique :
-        //  1. Si PRINTER_NAME est défini → utiliser ce nom directement (déjà installée)
-        //  2. Si PRINTER_IP est défini et pas PRINTER_NAME →
-        //     installer auto l'imprimante réseau via PowerShell, puis imprimer
-        //  3. Si rien → imprimante par défaut Windows
-        // ─────────────────────────────────────────────────────────
-        const printerIp    = (process.env.PRINTER_IP   || '').trim();
-        const printerPort  = (process.env.PRINTER_PORT  || '631').trim();
-        const rawPrinterName = process.env.PRINTER_NAME || '';
-        let cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
+        if (browserBin) {
+          const printerIp    = (process.env.PRINTER_IP   || '').trim();
+          const printerPort  = (process.env.PRINTER_PORT  || '631').trim();
+          const rawPrinterName = process.env.PRINTER_NAME || '';
+          let cleanPrinterName = rawPrinterName.replace(/^["']|["']$/g, '').trim();
 
-        // Ignore generic placeholder names from documentation/examples
-        const placeholders = ['monimprimantepos', 'nomdevotreimprimante', 'nomexactdevotreimprimante', 'default', 'imprimante', 'pos-80-example'];
-        if (placeholders.includes(cleanPrinterName.toLowerCase())) {
-          console.log(`ℹ️ PRINTER_NAME="${cleanPrinterName}" est un nom d'exemple -> ignoré.`);
-          cleanPrinterName = '';
-        }
+          const placeholders = ['monimprimantepos', 'nomdevotreimprimante', 'nomexactdevotreimprimante', 'default', 'imprimante', 'pos-80-example'];
+          if (placeholders.includes(cleanPrinterName.toLowerCase())) {
+            cleanPrinterName = '';
+          }
 
-        // Si PRINTER_IP est défini mais pas PRINTER_NAME, on installe auto l'imprimante réseau
-        const resolveNetworkPrinter = () => new Promise((resolve) => {
-          if (!printerIp || cleanPrinterName) return resolve(cleanPrinterName);
-
-          const ippUri = `http://${printerIp}:${printerPort}/ipp/print`;
-          const autoName = `POS-Printer-${printerIp}`;
-          console.log(`🔌 [WIN RÉSEAU] Installation automatique de l'imprimante réseau ${printerIp}...`);
-          // Ajoute l'imprimante IPP réseau dans le spooler Windows (silencieux)
-          const addCmd = `powershell -Command "if (-not (Get-Printer -Name '${autoName}' -ErrorAction SilentlyContinue)) { Add-Printer -ConnectionURI '${ippUri}' -Name '${autoName}' }"`;
-          exec(addCmd, (err) => {
-            if (err) {
-              console.warn(`⚠️ [WIN RÉSEAU] Impossible d'installer l'imprimante auto (${err.message}). Tentative sur l'imprimante par défaut.`);
-              resolve('');
-            } else {
-              console.log(`✅ [WIN RÉSEAU] Imprimante réseau installée sous le nom : ${autoName}`);
-              resolve(autoName);
-            }
+          const resolveNetworkPrinter = () => new Promise((res) => {
+            if (!printerIp || cleanPrinterName) return res(cleanPrinterName);
+            const ippUri = `http://${printerIp}:${printerPort}/ipp/print`;
+            const autoName = `POS-Printer-${printerIp}`;
+            const addCmd = `powershell -Command "if (-not (Get-Printer -Name '${autoName}' -ErrorAction SilentlyContinue)) { Add-Printer -ConnectionURI '${ippUri}' -Name '${autoName}' }"`;
+            exec(addCmd, () => res(autoName));
           });
-        });
 
-        const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
-        const formattedPdfPath = pdfPath.replace(/\\/g, '/');
+          const formattedHtmlPath = htmlPath.replace(/\\/g, '/');
+          const formattedPdfPath = pdfPath.replace(/\\/g, '/');
+          const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
 
-        // Step 1: Generate PDF first using Chromium headless
-        const generatePdfCmd = `"${browserBin}" --headless=new --no-sandbox --disable-gpu --print-to-pdf="${formattedPdfPath}" --no-pdf-header-footer "file:///${formattedHtmlPath}"`;
-
-        console.log(`🌐 [CHROME HEADLESS] Génération du PDF via : ${browserBin}`);
-        exec(generatePdfCmd, async (pdfErr) => {
-          if (pdfErr) {
-            console.error('⛔ [BLOCAGE IMPRESSION] Échec de la génération du PDF par Chrome:', pdfErr.message);
-            return;
-          }
-
-          // VERIFICATION ET SÉCURITÉ : Le fichier doit exister et être un PDF non vide
-          if (!existsSync(pdfPath) || !pdfPath.endsWith('.pdf')) {
-            console.error('⛔ [BLOCAGE IMPRESSION] ERREUR : Le fichier à imprimer N\'EST PAS un fichier PDF valide ou est introuvable. Impression annulée.');
-            return;
-          }
-
-          try {
-            const stats = await fs.stat(pdfPath);
-            if (stats.size === 0) {
-              console.error('⛔ [BLOCAGE IMPRESSION] ERREUR : Fichier PDF généré de taille 0 octet. Impression annulée.');
-              return;
+          exec(generatePdfCmd, async (pdfErr) => {
+            if (pdfErr) {
+              console.error('⛔ [BLOCAGE IMPRESSION] Échec de la génération du PDF par Chrome:', pdfErr.message);
+              return resolve({ ok: false, error: pdfErr.message });
             }
-            console.log(`✅ [PDF VALIDE] Fichier PDF créé avec succès : ${pdfPath} (${(stats.size / 1024).toFixed(2)} KB)`);
-          } catch (e) {
-            console.error('⛔ [BLOCAGE IMPRESSION] Erreur d\'accès au fichier PDF :', e.message);
-            return;
-          }
 
-          // Step 2: Print ONLY if PDF is verified and valid
-          // Résoudre le nom de l'imprimante (auto-install réseau si PRINTER_IP)
-          const resolvedPrinterName = await resolveNetworkPrinter();
-          const effectivePrinterName = resolvedPrinterName || cleanPrinterName;
-          const targetPrinterLog = effectivePrinterName
-            ? `l'imprimante "${effectivePrinterName}"`
-            : (printerIp ? `réseau ${printerIp}` : "l'imprimante par DÉFAUT de Windows");
-          console.log(`🖨️ [IMPRESSION WINDOWS] Envoi du PDF vers ${targetPrinterLog}...`);
-
-          // Méthode N°1 : Bibliothèque officielle pdf-to-printer (Moteur SumatraPDF d'impression directe sous Windows)
-          console.log(`▶️ Execution Méthode N°1 (pdf-to-printer / SumatraPDF)...`);
-          const ptpOptions = {
-            ...(effectivePrinterName ? { printer: effectivePrinterName } : {}),
-            win32: ['-print-settings "noscale"']
-          };
-
-          try {
-            await ptp.print(pdfPath, ptpOptions);
-            console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via pdf-to-printer sur ${targetPrinterLog}`);
-            return;
-          } catch (ptpErr) {
-            console.warn(`⚠️ Méthode N°1 (pdf-to-printer) échouée (${ptpErr.message}), tentative via Méthode N°2 (Windows Shell)...`);
-          }
-
-
-          // Méthode 2: Impression directe via le handler PDF natif Windows
-          const printCmd2 = cleanPrinterName
-            ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"'" `
-            : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`;
-
-          console.log(`▶️ Execution Méthode 2 (Windows Native Shell Print) : ${printCmd2}`);
-
-          exec(printCmd2, (err2) => {
-            if (!err2) {
-              console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via le Shell Windows sur ${targetPrinterLog}`);
-              return;
+            if (!existsSync(pdfPath) || !pdfPath.endsWith('.pdf')) {
+              return resolve({ ok: false, error: 'Invalid PDF' });
             }
-            console.warn(`⚠️ Méthode 2 échouée (${err2.message}), tentative Méthode 3 (Chromium Direct)...`);
 
-            // Méthode 3: Chromium Direct PDF Print (--headless=old)
-            const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
-            const printCmd3 = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
-            console.log(`▶️ Execution Méthode 3 (Chromium Direct) : ${printCmd3}`);
+            const resolvedPrinterName = await resolveNetworkPrinter();
+            const effectivePrinterName = resolvedPrinterName || cleanPrinterName;
+            const ptpOptions = {
+              ...(effectivePrinterName ? { printer: effectivePrinterName } : {}),
+              win32: ['-print-settings "noscale"']
+            };
 
-            exec(printCmd3, (err3) => {
-              if (!err3) {
-                console.log(`✅ [SUCCÈS IMPRESSION] Fichier PDF imprimé avec succès via Chromium Direct sur ${targetPrinterLog}`);
-              } else {
-                console.error(`❌ [ÉCHEC IMPRESSION TOTAL] Impossible d'envoyer le ticket sur l'imprimante : ${err3?.message}`);
+            try {
+              await ptp.print(pdfPath, ptpOptions);
+              console.log(`✅ [SUCCÈS IMPRESSION] PDF imprimé via pdf-to-printer`);
+              return resolve({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
+            } catch (ptpErr) {
+              console.warn(`⚠️ Méthode N°1 (pdf-to-printer) échouée, tentative Shell Windows...`);
+            }
+
+            const printCmd2 = cleanPrinterName
+              ? `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb PrintTo -ArgumentList '\"${cleanPrinterName}\"'" `
+              : `powershell -Command "Start-Process -FilePath '${pdfPath}' -Verb Print"`;
+
+            exec(printCmd2, (err2) => {
+              if (!err2) {
+                return resolve({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
               }
+              const printerArg = cleanPrinterName ? `--printer-name="${cleanPrinterName}"` : '';
+              const printCmd3 = `"${browserBin}" --headless=old --no-sandbox --disable-gpu --print-to-printer ${printerArg} "${pdfPath}"`;
+              exec(printCmd3, (err3) => {
+                if (!err3) resolve({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
+                else resolve({ ok: false, error: err3?.message });
+              });
             });
           });
-        });
-      } else {
-        console.warn('Ni Chrome ni Edge n\'ont été trouvés sous Windows. Veuillez installer Google Chrome.');
-      }
-    }
+        } else {
+          console.warn('Ni Chrome ni Edge n\'ont été trouvés sous Windows.');
+          resolve({ ok: false, error: 'No browser found for Windows printing' });
+        }
+      };
 
-    res.json({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
-  } catch (err) {
-    console.error('Print endpoint error', err);
-    res.status(500).json({ error: 'Failed to enqueue print job' });
+      runWinPrint();
+    } else {
+      resolve({ ok: true, path: `/print_jobs/print_${timestamp}.html` });
+    }
+  });
+}
+
+async function processPrintQueue() {
+  if (isProcessingPrintQueue || printQueue.length === 0) return;
+  isProcessingPrintQueue = true;
+
+  while (printQueue.length > 0) {
+    const jobItem = printQueue.shift();
+    try {
+      console.log(`🖨️ Traitement du job d'impression (restants en file d'attente : ${printQueue.length})...`);
+      const result = await executeSinglePrintJob(jobItem.body);
+      jobItem.resolve(result);
+    } catch (err) {
+      console.error('❌ Erreur lors de l\'impression du job:', err);
+      jobItem.resolve({ ok: false, error: err.message });
+    }
+    // Petit délai de 400ms entre deux impressions pour laisser l'imprimante thermique traiter
+    await new Promise(r => setTimeout(r, 400));
   }
+
+  isProcessingPrintQueue = false;
+}
+
+// Endpoint de réception des jobs d'impression avec File d'Attente
+app.post('/api/print', (req, res) => {
+  new Promise((resolve) => {
+    printQueue.push({ body: req.body, resolve });
+    processPrintQueue();
+  })
+    .then(result => res.json(result))
+    .catch(err => res.status(500).json({ error: err.message }));
 });
 
 // Diagnostic route: List Windows / Linux installed printers
@@ -2784,6 +2740,37 @@ app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });
 
+async function ensureDeliveryColumnsExist() {
+  try {
+    const columns = await prisma.$queryRawUnsafe(`PRAGMA table_info("Invoice")`);
+    if (Array.isArray(columns)) {
+      const colNames = columns.map(c => c.name);
+      if (!colNames.includes('isDelivery')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "isDelivery" BOOLEAN NOT NULL DEFAULT 0`);
+        console.log('✅ Auto-migration: Colonne "isDelivery" ajoutée à Invoice');
+      }
+      if (!colNames.includes('deliveryNo')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveryNo" TEXT`);
+        console.log('✅ Auto-migration: Colonne "deliveryNo" ajoutée à Invoice');
+      }
+      if (!colNames.includes('deliveryAddress')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveryAddress" TEXT`);
+        console.log('✅ Auto-migration: Colonne "deliveryAddress" ajoutée à Invoice');
+      }
+      if (!colNames.includes('deliveryStatus')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveryStatus" TEXT`);
+        console.log('✅ Auto-migration: Colonne "deliveryStatus" ajoutée à Invoice');
+      }
+      if (!colNames.includes('deliveredAt')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveredAt" DATETIME`);
+        console.log('✅ Auto-migration: Colonne "deliveredAt" ajoutée à Invoice');
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Verification automatique des colonnes de livraison:', err.message);
+  }
+}
+
 // Démarrage du serveur
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`================================================`);
@@ -2792,6 +2779,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
   console.log(`================================================`);
+  ensureDeliveryColumnsExist().catch(err => console.error('Ensure delivery columns error:', err));
   syncExistingClients().catch(err => console.error('Sync clients error:', err));
   scheduleAutomaticBackups();
 });
