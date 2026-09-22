@@ -24,13 +24,17 @@ export default function DeliveriesView({ currentUser }) {
       if (searchQuery.trim()) params.append('q', searchQuery.trim());
 
       const res = await fetch(`${API_BASE}/deliveries?${params.toString()}`);
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setDeliveries(Array.isArray(data) ? data : []);
+      } else {
+        setDeliveries([]);
       }
     } catch (err) {
       console.error('Error fetching deliveries:', err);
-      showToast("⚠️ Erreur lors de la récupération des livraisons", "error");
+      setDeliveries([]);
     } finally {
       setLoading(false);
     }

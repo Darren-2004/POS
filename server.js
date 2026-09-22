@@ -514,9 +514,36 @@ app.delete('/api/users/:id', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
     if (user.role === 'ADMIN') return res.status(400).json({ error: 'Impossible de supprimer un administrateur' });
 
+    // Récupérer un compte administrateur pour réaffecter l'historique si la caisse a déjà fait des ventes
+    const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+
+    if (adminUser) {
+      await prisma.invoice.updateMany({
+        where: { createdById: id },
+        data: { createdById: adminUser.id }
+      });
+      await prisma.invoice.updateMany({
+        where: { cancelledById: id },
+        data: { cancelledById: null }
+      });
+      await prisma.reservation.updateMany({
+        where: { createdById: id },
+        data: { createdById: adminUser.id }
+      });
+      await prisma.reservation.updateMany({
+        where: { updatedById: id },
+        data: { updatedById: null }
+      });
+      await prisma.reservationPayment.updateMany({
+        where: { createdById: id },
+        data: { createdById: adminUser.id }
+      });
+    }
+
     await prisma.user.delete({ where: { id } });
     res.json({ message: 'Utilisateur supprimé' });
   } catch (error) {
+    console.error('Delete user error:', error);
     res.status(500).json({ error: 'Erreur lors de la suppression de l\'utilisateur' });
   }
 });
