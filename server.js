@@ -45,7 +45,7 @@ const localDayRange = (dateStr) => {
   return { start, end };
 };
 
-// Helper: generate guaranteed unique invoice number FAC-YYYYMMDD-XXXX
+// Helper: generate guaranteed unique invoice number FAC-YYYYMMDD-XXXX (for standard cash sales)
 async function generateUniqueInvoiceNumber(tx) {
   const now = new Date();
   const year = now.getFullYear();
@@ -54,12 +54,48 @@ async function generateUniqueInvoiceNumber(tx) {
   const prefix = `FAC-${year}${month}${day}-`;
 
   const todayInvoices = await tx.invoice.findMany({
-    where: { invoiceNumber: { startsWith: prefix } },
+    where: {
+      invoiceNumber: { startsWith: prefix },
+      NOT: { invoiceNumber: { startsWith: `FAC-RES-` } }
+    },
     select: { invoiceNumber: true }
   });
 
   let maxSeq = 0;
   todayInvoices.forEach(inv => {
+    const parts = inv.invoiceNumber.split('-');
+    const seqNum = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(seqNum) && seqNum > maxSeq) {
+      maxSeq = seqNum;
+    }
+  });
+
+  let nextSeq = maxSeq + 1;
+  let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+
+  while (await tx.invoice.findUnique({ where: { invoiceNumber: candidate } })) {
+    nextSeq++;
+    candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  return candidate;
+}
+
+// Helper: generate guaranteed unique reservation invoice number FAC-RES-YYYYMMDD-XXXX
+async function generateUniqueReservationInvoiceNumber(tx) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const prefix = `FAC-RES-${year}${month}${day}-`;
+
+  const todayResInvoices = await tx.invoice.findMany({
+    where: { invoiceNumber: { startsWith: prefix } },
+    select: { invoiceNumber: true }
+  });
+
+  let maxSeq = 0;
+  todayResInvoices.forEach(inv => {
     const parts = inv.invoiceNumber.split('-');
     const seqNum = parseInt(parts[parts.length - 1], 10);
     if (!isNaN(seqNum) && seqNum > maxSeq) {
@@ -87,14 +123,20 @@ async function generateUniqueDeliveryNumber(tx) {
   const prefix = `LIV-${year}${month}${day}-`;
 
   const todayDeliveries = await tx.invoice.findMany({
-    where: { deliveryNo: { startsWith: prefix } },
-    select: { deliveryNo: true }
+    where: {
+      OR: [
+        { invoiceNumber: { startsWith: prefix } },
+        { deliveryNo: { startsWith: prefix } }
+      ]
+    },
+    select: { invoiceNumber: true, deliveryNo: true }
   });
 
   let maxSeq = 0;
   todayDeliveries.forEach(inv => {
-    if (inv.deliveryNo) {
-      const parts = inv.deliveryNo.split('-');
+    const num = inv.deliveryNo || inv.invoiceNumber || '';
+    if (num.startsWith(prefix)) {
+      const parts = num.split('-');
       const seqNum = parseInt(parts[parts.length - 1], 10);
       if (!isNaN(seqNum) && seqNum > maxSeq) {
         maxSeq = seqNum;
@@ -105,7 +147,16 @@ async function generateUniqueDeliveryNumber(tx) {
   let nextSeq = maxSeq + 1;
   let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
 
-  while (await tx.invoice.findFirst({ where: { deliveryNo: candidate } })) {
+  while (
+    await tx.invoice.findFirst({
+      where: {
+        OR: [
+          { invoiceNumber: candidate },
+          { deliveryNo: candidate }
+        ]
+      }
+    })
+  ) {
     nextSeq++;
     candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
   }
@@ -876,8 +927,15 @@ app.post('/api/invoices', async (req, res) => {
   try {
     // Utiliser une transaction Prisma pour garantir la concurrence et le format séquentiel sans doublons
     const newInvoice = await prisma.$transaction(async (tx) => {
-      const invoiceNumber = await generateUniqueInvoiceNumber(tx);
-      const deliveryNo = isDelivery ? await generateUniqueDeliveryNumber(tx) : null;
+      let invoiceNumber;
+      let deliveryNo = null;
+
+      if (isDelivery) {
+        deliveryNo = await generateUniqueDeliveryNumber(tx);
+        invoiceNumber = deliveryNo;
+      } else {
+        invoiceNumber = await generateUniqueInvoiceNumber(tx);
+      }
 
       // Création de la facture et de ses éléments
       return await tx.invoice.create({
@@ -1257,7 +1315,7 @@ app.post('/api/reservations/:id/create-invoice', async (req, res) => {
     const lastPaymentMethod = reservation.payments?.[reservation.payments.length - 1]?.paymentMethod || 'CASH';
 
     const newInvoice = await prisma.$transaction(async (tx) => {
-      const invoiceNumber = await generateUniqueInvoiceNumber(tx);
+      const invoiceNumber = await generateUniqueReservationInvoiceNumber(tx);
 
       return await tx.invoice.create({
         data: {

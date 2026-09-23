@@ -96,13 +96,13 @@ Error generating stack: `+e.message+`
   `:`
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
-      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">${c?`─── BON DE LIVRAISON ───`:`─── TICKET DE CAISSE ───`}</p>
+      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">${c?`─── BON DE LIVRAISON ───`:e.isReservation?`─── FACTURE DE RÉSERVATION ───`:`─── TICKET DE CAISSE ───`}</p>
       <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
-        <span>N° ${c?`Livraison`:`Ticket`}:</span>
+        <span>N° ${c?`Livraison`:e.isReservation?`Facture Résa`:`Ticket`}:</span>
         <span style="font-weight:bold;word-break:break-all;">${c&&e.deliveryNo?e.deliveryNo:e.invoiceNumber}</span>
       </div>
       ${c?`
