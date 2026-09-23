@@ -3,8 +3,8 @@ export const formatFCFA = (amount = 0) =>
 
 export const cx = (...classes) => classes.filter(Boolean).join(' ');
 
-export const getTodayDateStr = () => {
-  const now = new Date();
+export const getTodayDateStr = (dateObj = new Date()) => {
+  const now = dateObj instanceof Date ? dateObj : new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');

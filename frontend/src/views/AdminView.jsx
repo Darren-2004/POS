@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BarChart3, User as UserIcon, Settings, Award, Clock, Users as UsersIcon, Truck } from 'lucide-react';
-import { triggerPrint, cx } from '../utils/helpers';
+import { triggerPrint, getTodayDateStr, cx } from '../utils/helpers';
 import Dashboard from './admin/Dashboard';
 import Users from './admin/Users';
 import CategoriesView from './admin/Categories';
@@ -14,7 +14,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
   const [adminTab, setAdminTab] = useState('dashboard');
   const [stats, setStats] = useState({ today: {}, week: {}, month: {} });
   const [invoices, setInvoices] = useState([]);
-  const [filterDate, setFilterDate] = useState('');
+  const [filterDate, setFilterDate] = useState(getTodayDateStr());
   const [filterCashier, setFilterCashier] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [zReportData, setZReportData] = useState(null);
@@ -23,7 +23,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
   const [selectedReservationId, setSelectedReservationId] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   // Independent filters for reservations tab
-  const [reservationFilterDate, setReservationFilterDate] = useState('');
+  const [reservationFilterDate, setReservationFilterDate] = useState(getTodayDateStr());
   const [reservationFilterCashier, setReservationFilterCashier] = useState('');
   // Ref to track the latest fetch — stale responses are discarded
   const fetchIdRef = useRef(0);

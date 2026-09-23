@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Truck, Search, CheckSquare, Square, CheckCircle, Clock, MapPin, Phone, User, Printer, XCircle, PackageCheck, AlertCircle } from 'lucide-react';
+import { Truck, Search, CheckSquare, Square, CheckCircle, Clock, MapPin, Phone, User, Printer, XCircle, PackageCheck, AlertCircle, Calendar, RotateCcw } from 'lucide-react';
 import { API_BASE } from '../utils/constants';
-import { triggerPrint, showToast, cx, formatFCFA } from '../utils/helpers';
+import { triggerPrint, showToast, getTodayDateStr, cx, formatFCFA } from '../utils/helpers';
 
 export default function DeliveriesView({ currentUser }) {
   const [deliveries, setDeliveries] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState('ALL'); // ALL, PENDING, IN_DELIVERY, DELIVERED, CANCELLED
+  const [filterDate, setFilterDate] = useState(getTodayDateStr());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedDelivery, setSelectedDelivery] = useState(null);
@@ -21,6 +22,7 @@ export default function DeliveriesView({ currentUser }) {
     try {
       const params = new URLSearchParams();
       if (filterStatus !== 'ALL') params.append('status', filterStatus);
+      if (filterDate) params.append('date', filterDate);
       if (searchQuery.trim()) params.append('q', searchQuery.trim());
 
       const res = await fetch(`${API_BASE}/deliveries?${params.toString()}`);
@@ -38,7 +40,7 @@ export default function DeliveriesView({ currentUser }) {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, searchQuery]);
+  }, [filterStatus, filterDate, searchQuery]);
 
   useEffect(() => {
     fetchDeliveries();
@@ -244,16 +246,50 @@ export default function DeliveriesView({ currentUser }) {
           ))}
         </div>
 
-        {/* Search */}
-        <div className="relative flex-1 sm:max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
-          <input
-            type="text"
-            placeholder="Rechercher nom, tél, N° livraison, adresse..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-zinc-900 py-1.5 pl-9 pr-3 text-xs text-foreground placeholder-foreground/30 outline-none focus:border-gold/60"
-          />
+        {/* Date Filter & Search */}
+        <div className="flex flex-wrap items-center gap-2 flex-1 justify-end">
+          <div className="flex items-center gap-1.5 bg-zinc-900 px-2 py-1 rounded-xl border border-white/10 text-xs">
+            <Calendar className="h-3.5 w-3.5 text-gold" />
+            <input
+              type="date"
+              value={filterDate}
+              onChange={e => setFilterDate(e.target.value)}
+              className="bg-transparent text-foreground text-xs font-semibold outline-none border-none cursor-pointer [color-scheme:dark]"
+            />
+            {filterDate === getTodayDateStr() ? (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-gold/20 text-gold">Aujourd'hui</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setFilterDate(getTodayDateStr())}
+                className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-white/10 hover:bg-white/20 text-foreground transition"
+              >
+                Aujourd'hui
+              </button>
+            )}
+            {filterDate && (
+              <button
+                type="button"
+                onClick={() => setFilterDate('')}
+                className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-white/5 hover:bg-white/10 text-foreground/70 hover:text-foreground transition flex items-center gap-1"
+                title="Afficher toutes les dates"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Toutes</span>
+              </button>
+            )}
+          </div>
+
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
+            <input
+              type="text"
+              placeholder="Rechercher nom, tél, N° livraison, adresse..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-zinc-900 py-1.5 pl-9 pr-3 text-xs text-foreground placeholder-foreground/30 outline-none focus:border-gold/60"
+            />
+          </div>
         </div>
       </div>
 

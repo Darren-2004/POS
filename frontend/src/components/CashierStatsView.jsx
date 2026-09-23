@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart2, TrendingUp, DollarSign, CreditCard } from 'lucide-react';
-import { formatFCFA, cx } from '../utils/helpers';
+import { BarChart2, TrendingUp, DollarSign, CreditCard, Calendar } from 'lucide-react';
+import { formatFCFA, getTodayDateStr, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
 export default function CashierStatsView({ currentUser }) {
-  const [period, setPeriod] = useState('today'); // 'today' | 'week'
+  const [period, setPeriod] = useState('today'); // 'today' | 'custom' | 'week'
+  const [customDate, setCustomDate] = useState(getTodayDateStr());
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -12,13 +13,13 @@ export default function CashierStatsView({ currentUser }) {
     if (currentUser?.id) {
       fetchStats();
     }
-  }, [currentUser?.id, period]);
+  }, [currentUser?.id, period, customDate]);
 
   useEffect(() => {
     const handleRefresh = () => fetchStats();
     window.addEventListener('pos:dashboard-refresh', handleRefresh);
     return () => window.removeEventListener('pos:dashboard-refresh', handleRefresh);
-  }, [currentUser?.id, period]);
+  }, [currentUser?.id, period, customDate]);
 
   const fetchStats = async () => {
     if (!currentUser?.id) return;
@@ -26,25 +27,30 @@ export default function CashierStatsView({ currentUser }) {
     try {
       const now = new Date();
       let startDateStr, endDateStr;
-      const getStr = (d) => d.toISOString().split('T')[0];
 
       if (period === 'today') {
-        const todayStr = getStr(now);
+        const todayStr = getTodayDateStr();
         startDateStr = todayStr;
         endDateStr = todayStr;
+      } else if (period === 'custom') {
+        startDateStr = customDate || getTodayDateStr();
+        endDateStr = customDate || getTodayDateStr();
       } else {
+        // week
         const d = new Date(now);
         const day = d.getDay();
         const diff = day === 0 ? -6 : 1 - day;
         d.setDate(d.getDate() + diff);
-        startDateStr = getStr(d);
-        endDateStr = getStr(now);
+        startDateStr = getTodayDateStr(d);
+        endDateStr = getTodayDateStr();
       }
 
       const res = await fetch(`${API_BASE}/stats?cashierId=${currentUser.id}&startDate=${startDateStr}&endDate=${endDateStr}`);
       if (res.ok) {
         const data = await res.json();
-        setStats(period === 'today' ? data.today : data.week);
+        if (period === 'today') setStats(data.today);
+        else if (period === 'week') setStats(data.week);
+        else setStats(data.activeFilter || data.today);
       }
     } catch (e) {
       console.error('Fetch cashier stats error:', e);
@@ -65,10 +71,10 @@ export default function CashierStatsView({ currentUser }) {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex bg-zinc-950 p-1 rounded-xl border border-white/10">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-white/10 text-xs">
             <button
-              onClick={() => setPeriod('today')}
+              onClick={() => { setPeriod('today'); setCustomDate(getTodayDateStr()); }}
               className={cx(
                 "px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer",
                 period === 'today' ? "bg-gold text-black shadow" : "text-foreground/60 hover:text-foreground"
@@ -85,6 +91,20 @@ export default function CashierStatsView({ currentUser }) {
             >
               Cette Semaine
             </button>
+          </div>
+
+          {/* Custom Date Input */}
+          <div className="flex items-center gap-1.5 bg-zinc-950 px-2 py-1 rounded-xl border border-white/10 text-xs">
+            <Calendar className="h-3.5 w-3.5 text-gold" />
+            <input
+              type="date"
+              value={customDate}
+              onChange={(e) => {
+                setCustomDate(e.target.value);
+                setPeriod('custom');
+              }}
+              className="bg-transparent text-foreground text-xs font-semibold outline-none border-none cursor-pointer [color-scheme:dark]"
+            />
           </div>
 
           <button

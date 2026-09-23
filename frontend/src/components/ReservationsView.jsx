@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight } from 'lucide-react';
+import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight, Calendar, RotateCcw } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import ClientAutocomplete from './ClientAutocomplete';
-import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, cx } from '../utils/helpers';
+import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, getTodayDateStr, cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
 
@@ -12,6 +12,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const [loadingList, setLoadingList] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [filterDate, setFilterDate] = useState(getTodayDateStr());
 
   // Side Drawer state for selected reservation
   const [selectedRes, setSelectedRes] = useState(null); // null = Drawer closed
@@ -74,7 +75,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
 
   useEffect(() => {
     fetchReservations();
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, filterDate]);
 
   const fetchReservations = async () => {
     setLoadingList(true);
@@ -82,6 +83,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       const params = new URLSearchParams();
       if (searchQuery) params.append('q', searchQuery);
       if (statusFilter) params.append('status', statusFilter);
+      if (filterDate) params.append('date', filterDate);
       const res = await fetch(`${API_BASE}/reservations?${params.toString()}`);
       if (res.ok) {
         setReservations(await res.json());
@@ -281,6 +283,39 @@ export default function ReservationsView({ categories = [], currentUser, serverO
             >
               Solde 100%
             </button>
+          </div>
+
+          {/* Date Picker */}
+          <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-white/10 text-xs">
+            <Calendar className="h-3.5 w-3.5 text-gold" />
+            <input
+              type="date"
+              value={filterDate}
+              onChange={(e) => setFilterDate(e.target.value)}
+              className="bg-transparent text-foreground text-xs font-semibold outline-none border-none cursor-pointer [color-scheme:dark]"
+            />
+            {filterDate === getTodayDateStr() ? (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-gold/20 text-gold">Aujourd'hui</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setFilterDate(getTodayDateStr())}
+                className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-white/10 hover:bg-white/20 text-foreground transition cursor-pointer"
+              >
+                Aujourd'hui
+              </button>
+            )}
+            {filterDate && (
+              <button
+                type="button"
+                onClick={() => setFilterDate('')}
+                className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-white/5 hover:bg-white/10 text-foreground/70 hover:text-foreground transition flex items-center gap-1 cursor-pointer"
+                title="Afficher toutes les dates"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Toutes</span>
+              </button>
+            )}
           </div>
 
           {/* Search Box */}
