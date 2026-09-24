@@ -2746,12 +2746,20 @@ async function executeSinglePrintJob(body) {
   const { html } = body || {};
   if (!html) throw new Error('No html provided');
 
+  // Nettoyage automatique des émojis et symboles non-thermiques pour garantir 100% de compatibilité
+  const sanitizeForThermalPrint = (str) => {
+    if (typeof str !== 'string') return str;
+    return str.replace(/[\u{1F300}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu, '');
+  };
+
+  const cleanHtml = sanitizeForThermalPrint(html);
+
   const outDir = path.join(__dirname, 'print_jobs');
   await fs.mkdir(outDir, { recursive: true });
   const timestamp = Date.now();
   const htmlPath = path.join(outDir, `print_${timestamp}.html`);
   const pdfPath  = path.join(outDir, `print_${timestamp}.pdf`);
-  await fs.writeFile(htmlPath, html, 'utf8');
+  await fs.writeFile(htmlPath, cleanHtml, 'utf8');
 
   console.log('Saved print job to', htmlPath);
 

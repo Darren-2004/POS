@@ -240,7 +240,7 @@ export const triggerPrint = (invoiceData) => {
       ${isDelivery && invoiceData.deliveryPerson ? `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
         <span>Livreur:</span>
-        <span style="font-weight:bold;word-break:break-word;text-align:right;">🛵 ${invoiceData.deliveryPerson}</span>
+        <span style="font-weight:bold;word-break:break-word;text-align:right;">${invoiceData.deliveryPerson}</span>
       </div>` : ''}
     </div>
     <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
