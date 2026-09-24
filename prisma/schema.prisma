@@ -50,6 +50,10 @@ model Invoice {
   deliveryAddress    String?
   deliveryStatus     String?       // "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
   deliveredAt        DateTime?
+  deliveryFee        Float?        @default(0)
+  deliveryPerson     String?
+  isPaid             Boolean       @default(false)
+  paidAt             DateTime?
   status             String        @default("VALIDATED") // "VALIDATED", "CANCELLED"
   cancellationReason String?
   createdAt          DateTime      @default(now())
@@ -113,6 +117,15 @@ model Client {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model DeliveryPerson {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 
 
 

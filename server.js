@@ -290,6 +290,57 @@ async function syncExistingClients() {
   }
 }
 
+async function upsertDeliveryPerson(rawName, rawPhone = null, db = prisma) {
+  try {
+    if (!db || !db.deliveryPerson) return null;
+    if (!rawName || typeof rawName !== 'string') return null;
+    const name = rawName.trim();
+    if (!name) return null;
+    const phone = rawPhone ? String(rawPhone).trim() : null;
+
+    const existing = await db.deliveryPerson.findFirst({
+      where: { name: { equals: name } }
+    });
+
+    if (existing) {
+      if (phone && (!existing.phone || existing.phone !== phone)) {
+        return await db.deliveryPerson.update({
+          where: { id: existing.id },
+          data: { phone }
+        });
+      }
+      return existing;
+    } else {
+      return await db.deliveryPerson.create({
+        data: {
+          name,
+          phone
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Error in upsertDeliveryPerson:', err);
+    return null;
+  }
+}
+
+async function syncExistingDeliveryPersons() {
+  try {
+    if (!prisma.deliveryPerson) return;
+    const invoices = await prisma.invoice.findMany({
+      where: { isDelivery: true, deliveryPerson: { not: null } },
+      select: { deliveryPerson: true }
+    });
+    for (const inv of invoices) {
+      if (inv.deliveryPerson) {
+        await upsertDeliveryPerson(inv.deliveryPerson, null);
+      }
+    }
+  } catch (err) {
+    console.error('Error syncing existing delivery persons:', err.message);
+  }
+}
+
 // GET /api/clients - Autocomplétion et recherche de clients
 app.get('/api/clients', async (req, res) => {
   const { q } = req.query;
@@ -910,7 +961,8 @@ app.post('/api/invoices', async (req, res) => {
     clientName,
     clientPhone,
     isDelivery,
-    deliveryAddress
+    deliveryAddress,
+    deliveryFee
   } = req.body;
 
   if (!items || !items.length || !createdById) {
@@ -949,6 +1001,7 @@ app.post('/api/invoices', async (req, res) => {
           deliveryNo,
           deliveryAddress: deliveryAddress ? String(deliveryAddress).trim() : null,
           deliveryStatus: isDelivery ? 'PENDING' : null,
+          deliveryFee: isDelivery ? (parseFloat(deliveryFee) || 0) : 0,
           createdById,
           items: {
             create: items.map(item => ({
@@ -1077,14 +1130,46 @@ app.post('/api/invoices/:id/cancel', async (req, res) => {
 // GESTION DES LIVRAISONS
 // -------------------------------------------------------------
 
+// GET /api/delivery-persons - Liste des livreurs enregistrés
+app.get('/api/delivery-persons', async (req, res) => {
+  try {
+    const persons = await prisma.deliveryPerson.findMany({
+      orderBy: { name: 'asc' }
+    });
+    res.json(persons);
+  } catch (error) {
+    console.error('Get delivery persons error:', error.message);
+    res.json([]);
+  }
+});
+
+// POST /api/delivery-persons - Créer ou mettre à jour un livreur
+app.post('/api/delivery-persons', async (req, res) => {
+  const { name, phone } = req.body;
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: 'Le nom du livreur est requis' });
+  }
+  try {
+    const person = await upsertDeliveryPerson(name, phone);
+    res.json(person);
+  } catch (error) {
+    console.error('Create delivery person error:', error.message);
+    res.status(500).json({ error: 'Erreur lors de l\'enregistrement du livreur' });
+  }
+});
+
 // GET /api/deliveries - Liste des factures de livraison
 app.get('/api/deliveries', async (req, res) => {
-  const { status, date, cashierId, q } = req.query;
+  const { status, date, cashierId, q, driver } = req.query;
   try {
     const where = { isDelivery: true };
 
     if (status && status !== 'ALL') {
       where.deliveryStatus = status; // "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
+    }
+
+    if (driver && driver !== 'ALL') {
+      where.deliveryPerson = driver;
     }
 
     if (cashierId) {
@@ -1105,6 +1190,7 @@ app.get('/api/deliveries', async (req, res) => {
         { clientPhone: { contains: search } },
         { deliveryNo: { contains: search } },
         { deliveryAddress: { contains: search } },
+        { deliveryPerson: { contains: search } },
         { invoiceNumber: { contains: search } }
       ];
     }
@@ -1125,27 +1211,50 @@ app.get('/api/deliveries', async (req, res) => {
   }
 });
 
-// PUT /api/deliveries/:id/status - Mettre à jour le statut d'une livraison
+// PUT /api/deliveries/:id/status - Mettre à jour le statut / paiement d'une livraison
 app.put('/api/deliveries/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status, paymentMethod } = req.body; // status: "PENDING", "IN_DELIVERY", "DELIVERED", "CANCELLED"
-
-  if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
-    return res.status(400).json({ error: 'Statut de livraison invalide' });
-  }
+  const { status, action, paymentMethod, deliveryPerson, isPaid } = req.body;
 
   try {
-    const updateData = {
-      deliveryStatus: status
-    };
+    const updateData = {};
 
-    if (status === 'DELIVERED') {
-      updateData.deliveredAt = new Date();
+    if (action === 'PAY' || isPaid === true) {
+      updateData.isPaid = true;
+      updateData.paidAt = new Date();
       if (paymentMethod) {
         updateData.paymentMethod = paymentMethod;
       }
-    } else if (status === 'CANCELLED') {
-      updateData.status = 'CANCELLED';
+    }
+
+    if (action === 'UNASSIGN') {
+      updateData.deliveryPerson = null;
+      updateData.deliveryStatus = 'PENDING';
+    } else if (status) {
+      if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
+        return res.status(400).json({ error: 'Statut de livraison invalide' });
+      }
+      updateData.deliveryStatus = status;
+
+      if (deliveryPerson !== undefined) {
+        updateData.deliveryPerson = deliveryPerson ? String(deliveryPerson).trim() : null;
+        if (updateData.deliveryPerson) {
+          upsertDeliveryPerson(updateData.deliveryPerson).catch(() => {});
+        }
+      }
+
+      if (status === 'DELIVERED') {
+        updateData.deliveredAt = new Date();
+        updateData.isPaid = true;
+        if (!updateData.paidAt) {
+          updateData.paidAt = new Date();
+        }
+        if (paymentMethod) {
+          updateData.paymentMethod = paymentMethod;
+        }
+      } else if (status === 'CANCELLED') {
+        updateData.status = 'CANCELLED';
+      }
     }
 
     const updated = await prisma.invoice.update({
@@ -1170,26 +1279,51 @@ app.put('/api/deliveries/:id/status', async (req, res) => {
 
 // POST /api/deliveries/bulk-status - Mise à jour en masse (lot) de plusieurs livraisons
 app.post('/api/deliveries/bulk-status', async (req, res) => {
-  const { ids, status, paymentMethod } = req.body;
+  const { ids, status, action, paymentMethod, deliveryPerson, isPaid } = req.body;
 
   if (!ids || !Array.isArray(ids) || !ids.length) {
     return res.status(400).json({ error: 'Liste d\'identifiants requise' });
   }
 
-  if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
-    return res.status(400).json({ error: 'Statut de livraison invalide' });
-  }
-
   try {
-    const updateData = { deliveryStatus: status };
+    const updateData = {};
 
-    if (status === 'DELIVERED') {
-      updateData.deliveredAt = new Date();
+    if (action === 'PAY' || isPaid === true) {
+      updateData.isPaid = true;
+      updateData.paidAt = new Date();
       if (paymentMethod) {
         updateData.paymentMethod = paymentMethod;
       }
-    } else if (status === 'CANCELLED') {
-      updateData.status = 'CANCELLED';
+    }
+
+    if (action === 'UNASSIGN') {
+      updateData.deliveryPerson = null;
+      updateData.deliveryStatus = 'PENDING';
+    } else if (status) {
+      if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
+        return res.status(400).json({ error: 'Statut de livraison invalide' });
+      }
+      updateData.deliveryStatus = status;
+
+      if (deliveryPerson !== undefined) {
+        updateData.deliveryPerson = deliveryPerson ? String(deliveryPerson).trim() : null;
+        if (updateData.deliveryPerson) {
+          upsertDeliveryPerson(updateData.deliveryPerson).catch(() => {});
+        }
+      }
+
+      if (status === 'DELIVERED') {
+        updateData.deliveredAt = new Date();
+        updateData.isPaid = true;
+        if (!updateData.paidAt) {
+          updateData.paidAt = new Date();
+        }
+        if (paymentMethod) {
+          updateData.paymentMethod = paymentMethod;
+        }
+      } else if (status === 'CANCELLED') {
+        updateData.status = 'CANCELLED';
+      }
     }
 
     await prisma.invoice.updateMany({
@@ -1205,7 +1339,6 @@ app.post('/api/deliveries/bulk-status', async (req, res) => {
       }
     });
 
-    // Optionnel: enregistrer les clients
     updatedInvoices.forEach(inv => {
       if (inv.clientName || inv.clientPhone) {
         upsertClient(inv.clientName, inv.clientPhone).catch(() => {});
@@ -1783,9 +1916,9 @@ app.get('/api/z-report', async (req, res) => {
     let payments = { CASH: 0, ONLINE: 0, ORANGE_MONEY: 0 };
 
     invoices.forEach(inv => {
-      // Exclude reservation final invoices and non-delivered delivery invoices from cash summation
+      // Exclude reservation final invoices and unpaid non-delivered delivery invoices from cash summation
       if (!inv.isReservation) {
-        if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+        if (inv.isDelivery && !inv.isPaid && inv.deliveryStatus !== 'DELIVERED') {
           return;
         }
         total += inv.totalAmount;
@@ -1808,9 +1941,9 @@ app.get('/api/z-report', async (req, res) => {
       where: {
         invoice: {
           status: 'VALIDATED',
-          isReservation: false,
           OR: [
             { isDelivery: false },
+            { isPaid: true },
             { deliveryStatus: 'DELIVERED' }
           ],
           createdAt: { gte: start, lte: end },
@@ -1851,6 +1984,69 @@ app.get('/api/z-report', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la génération du rapport Z' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/product-sales-report - Rapport détaillé des ventes par produit
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/product-sales-report', async (req, res) => {
+  const { startDate, endDate, cashierId } = req.query;
+
+  let start, end;
+  if (startDate && endDate) {
+    const p1 = startDate.split('-').map(Number);
+    const p2 = endDate.split('-').map(Number);
+    start = new Date(p1[0], p1[1] - 1, p1[2], 0, 0, 0, 0);
+    end   = new Date(p2[0], p2[1] - 1, p2[2], 23, 59, 59, 999);
+  } else {
+    const now = new Date();
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  }
+
+  try {
+    // Récupère les items des factures validées (y compris les réservations totalement soldées/clôturées et les livraisons livrées)
+    const items = await prisma.invoiceItem.findMany({
+      where: {
+        invoice: {
+          status: 'VALIDATED',
+          OR: [
+            { isDelivery: false },
+            { isPaid: true },
+            { deliveryStatus: 'DELIVERED' }
+          ],
+          createdAt: { gte: start, lte: end },
+          ...(cashierId ? { createdById: cashierId } : {})
+        }
+      }
+    });
+
+    // Regroupement par NOM DE CATÉGORIE uniquement (somme tous les prix, peu importe le prix unitaire)
+    const productMap = {};
+    items.forEach(item => {
+      const key = item.categoryName;
+      if (!productMap[key]) {
+        productMap[key] = {
+          name: item.categoryName,
+          quantity: 0,
+          total: 0
+        };
+      }
+      productMap[key].quantity += 1;
+      productMap[key].total += item.price;
+    });
+
+    // Tri par total décroissant
+    const products = Object.values(productMap).sort((a, b) => b.total - a.total);
+
+    const grandTotal = products.reduce((sum, p) => sum + p.total, 0);
+    const totalQuantity = products.reduce((sum, p) => sum + p.quantity, 0);
+
+    res.json({ products, grandTotal, totalQuantity });
+  } catch (err) {
+    console.error('Product sales report error:', err);
+    res.status(500).json({ error: 'Erreur lors de la génération du rapport produits' });
   }
 });
 
@@ -1895,7 +2091,7 @@ app.get('/api/stats', async (req, res) => {
 
       invoices.forEach(inv => {
         if (!inv.isReservation) {
-          if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+          if (inv.isDelivery && !inv.isPaid && inv.deliveryStatus !== 'DELIVERED') {
             return;
           }
           count++;
@@ -1984,7 +2180,7 @@ app.get('/api/stats', async (req, res) => {
 
         allInvoices.forEach(inv => {
           if (!inv.isReservation) {
-            if (inv.isDelivery && inv.deliveryStatus !== 'DELIVERED') {
+            if (inv.isDelivery && !inv.isPaid && inv.deliveryStatus !== 'DELIVERED') {
               return;
             }
             count++;
@@ -2218,10 +2414,22 @@ function formatEscPosInvoice(invoiceData, printer) {
 
   printer.text('='.repeat(48));
   
-  printer
-    .bold(true)
-    .text(formatKeyValuePair('TOTAL À PAYER:', `${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA`))
-    .bold(false);
+  if (invoiceData.isDelivery && Number(invoiceData.deliveryFee || 0) > 0) {
+    const fee = Number(invoiceData.deliveryFee);
+    const subtotal = Number(invoiceData.totalAmount);
+    printer.text(formatKeyValuePair('Sous-total articles:', `${Math.round(subtotal).toLocaleString('fr-FR')} FCFA`));
+    printer.text(formatKeyValuePair('Frais de transport:', `${Math.round(fee).toLocaleString('fr-FR')} FCFA`));
+    printer.text('-'.repeat(48));
+    printer
+      .bold(true)
+      .text(formatKeyValuePair('TOTAL À PAYER:', `${Math.round(subtotal + fee).toLocaleString('fr-FR')} FCFA`))
+      .bold(false);
+  } else {
+    printer
+      .bold(true)
+      .text(formatKeyValuePair('TOTAL À PAYER:', `${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA`))
+      .bold(false);
+  }
 
   // Si c'est une facture de solde de réservation — afficher l'historique et le montant payé ce jour
   const resPayments = invoiceData.reservationPayments || [];
@@ -2850,7 +3058,32 @@ async function ensureDeliveryColumnsExist() {
         await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveredAt" DATETIME`);
         console.log('✅ Auto-migration: Colonne "deliveredAt" ajoutée à Invoice');
       }
+      if (!colNames.includes('deliveryFee')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveryFee" REAL DEFAULT 0`);
+        console.log('✅ Auto-migration: Colonne "deliveryFee" ajoutée à Invoice');
+      }
+      if (!colNames.includes('deliveryPerson')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "deliveryPerson" TEXT`);
+        console.log('✅ Auto-migration: Colonne "deliveryPerson" ajoutée à Invoice');
+      }
+      if (!colNames.includes('isPaid')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "isPaid" BOOLEAN NOT NULL DEFAULT 0`);
+        console.log('✅ Auto-migration: Colonne "isPaid" ajoutée à Invoice');
+      }
+      if (!colNames.includes('paidAt')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ADD COLUMN "paidAt" DATETIME`);
+        console.log('✅ Auto-migration: Colonne "paidAt" ajoutée à Invoice');
+      }
     }
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "DeliveryPerson" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL UNIQUE,
+        "phone" TEXT,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
   } catch (err) {
     console.warn('⚠️ Verification automatique des colonnes de livraison:', err.message);
   }
@@ -2866,6 +3099,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`================================================`);
   ensureDeliveryColumnsExist().catch(err => console.error('Ensure delivery columns error:', err));
   syncExistingClients().catch(err => console.error('Sync clients error:', err));
+  syncExistingDeliveryPersons().catch(err => console.error('Sync delivery persons error:', err));
   scheduleAutomaticBackups();
 });
 

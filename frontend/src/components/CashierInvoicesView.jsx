@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Printer, Eye, X, Receipt, Calendar, User, CreditCard } from 'lucide-react';
+import { Search, Printer, Eye, X, Receipt, Calendar, User, CreditCard, CheckCircle, XCircle } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import StatusChip from './StatusChip';
-import { formatFCFA, triggerPrint, getPaymentMethodLabel, getTodayDateStr, cx } from '../utils/helpers';
+import { formatFCFA, triggerPrint, getPaymentMethodLabel, getTodayDateStr, cx, isReservationInvoice, isDeliveryInvoice } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
 export default function CashierInvoicesView({ currentUser, serverOnline }) {
@@ -51,13 +51,20 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => {
+  // Direct sales only (exclude reservation completions and delivery invoices)
+  const directSalesInvoices = invoices.filter(inv => !isReservationInvoice(inv) && !isDeliveryInvoice(inv));
+
+  const filteredInvoices = directSalesInvoices.filter(inv => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase().trim();
     const invNo = (inv.invoiceNumber || '').toLowerCase();
     const client = (inv.clientName || '').toLowerCase();
     return invNo.includes(q) || client.includes(q);
   });
+
+  const validatedInvoices = directSalesInvoices.filter(inv => inv.status === 'VALIDATED');
+  const totalSalesRevenue = validatedInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+  const cancelledCount = directSalesInvoices.filter(inv => inv.status === 'CANCELLED').length;
 
   const groupInvoiceItems = (items = []) => {
     const map = {};
@@ -71,13 +78,46 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-white/[0.01] p-2">
+      {/* KPI Stats Bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3 shrink-0">
+        <div className="rounded-2xl border border-gold/30 bg-gold/10 p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gold/20 text-gold">
+            <CheckCircle className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-gold/90">CA Ventes Comptabilisé</div>
+            <div className="text-base font-bold tabular-nums text-gold">{formatFCFA(totalSalesRevenue)}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+            <Receipt className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Ventes Validées</div>
+            <div className="text-base font-bold tabular-nums text-emerald-400">{validatedInvoices.length}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400">
+            <XCircle className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Ventes Annulées</div>
+            <div className="text-base font-bold tabular-nums text-rose-400">{cancelledCount}</div>
+          </div>
+        </div>
+      </div>
+
       {/* Search & Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-black/20 p-3 rounded-2xl border border-white/5 mb-3 shrink-0">
         <div className="flex items-center gap-2">
           <Receipt className="h-5 w-5 text-gold" />
           <h2 className="text-sm font-bold text-foreground">Mes Ventes & Réimpression</h2>
           <span className="rounded-full bg-gold/20 px-2.5 py-0.5 text-xs font-extrabold text-gold">
-            {invoices.length}
+            {directSalesInvoices.length}
           </span>
         </div>
 
@@ -172,12 +212,12 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
                   >
                     <td className="px-4 py-3 font-mono font-bold text-gold">
                       <div>{inv.invoiceNumber}</div>
-                      {inv.isReservation && (
+                      {isReservationInvoice(inv) && (
                         <span className="text-[9px] font-bold text-purple-300 bg-purple-500/20 px-1.5 py-0.5 rounded border border-purple-500/30">
                           🏷️ Fin Réservation
                         </span>
                       )}
-                      {inv.isDelivery && (
+                      {isDeliveryInvoice(inv) && (
                         <span className="text-[9px] font-bold text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded border border-sky-500/30">
                           🚚 Livraison
                         </span>

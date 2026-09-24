@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight, Calendar, RotateCcw } from 'lucide-react';
+import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight, Calendar, RotateCcw, Receipt, CreditCard } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import ClientAutocomplete from './ClientAutocomplete';
 import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, getTodayDateStr, cx } from '../utils/helpers';
@@ -75,6 +75,12 @@ export default function ReservationsView({ categories = [], currentUser, serverO
 
   useEffect(() => {
     fetchReservations();
+  }, [searchQuery, statusFilter, filterDate]);
+
+  useEffect(() => {
+    const handleRefresh = () => fetchReservations();
+    window.addEventListener('pos:dashboard-refresh', handleRefresh);
+    return () => window.removeEventListener('pos:dashboard-refresh', handleRefresh);
   }, [searchQuery, statusFilter, filterDate]);
 
   const fetchReservations = async () => {
@@ -248,10 +254,57 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const currentRemaining = getRemainingBalance(selectedRes);
   const willFinishPayment = selectedRes && newAmountNum > 0 && (currentRemaining - newAmountNum) <= 0.01;
 
-
+  const activeReservations = reservations.filter(r => r.status !== 'CANCELLED');
+  const totalPaidSum = activeReservations.reduce((sum, r) => sum + (r.totalPaid || 0), 0);
+  const totalReservationsAmount = activeReservations.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+  const totalRemainingBalance = activeReservations.reduce((sum, r) => sum + (r.remainingBalance || 0), 0);
+  const pendingCount = activeReservations.filter(r => r.status === 'PENDING').length;
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-white/[0.01] p-2">
+      {/* KPI Stats Bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 shrink-0">
+        <div className="rounded-2xl border border-gold/30 bg-gold/10 p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gold/20 text-gold">
+            <CheckCircle className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-gold/90">Acomptes & Règlements Perçus</div>
+            <div className="text-sm sm:text-base font-bold tabular-nums text-gold">{formatFCFA(totalPaidSum)}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
+            <Clock className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Réservations en cours</div>
+            <div className="text-lg font-bold tabular-nums text-amber-400">{pendingCount}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
+            <Receipt className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Valeur Totale Réservée</div>
+            <div className="text-sm sm:text-base font-bold tabular-nums text-purple-300">{formatFCFA(totalReservationsAmount)}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+            <CreditCard className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Solde Restant</div>
+            <div className="text-sm sm:text-base font-bold tabular-nums text-blue-400">{formatFCFA(totalRemainingBalance)}</div>
+          </div>
+        </div>
+      </div>
+
       {/* Top Filter & Search Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-black/20 p-3 rounded-2xl border border-white/5 mb-3 shrink-0">
         <div className="flex items-center gap-2">

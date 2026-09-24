@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import StatusChip from '../../components/StatusChip';
 import IconButton from '../../components/IconButton';
 import ConfirmModal from '../../components/ConfirmModal';
-import { formatFCFA, triggerPrint, getTodayDateStr, cx } from '../../utils/helpers';
+import { formatFCFA, triggerPrint, getTodayDateStr, cx, isReservationInvoice, isDeliveryInvoice } from '../../utils/helpers';
 import { Printer, Trash2, Receipt, RotateCcw, Calendar, X } from 'lucide-react';
 import { API_BASE } from '../../utils/constants';
 
@@ -29,13 +29,6 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
 
   const normalizeStatus = (value) => String(value || '').trim().toUpperCase();
   const normalizeMethod = (value) => String(value || '').trim().toUpperCase();
-  const isReservationInvoice = (inv) => {
-    if (!inv || typeof inv !== 'object') return false;
-    if (inv.isReservation === true || inv.isReservation === 1 || inv.isReservation === '1' || inv.isReservation === 'true') return true;
-    if (inv.isReservationInvoice === true || inv.isReservationInvoice === 1 || inv.isReservationInvoice === '1' || inv.isReservationInvoice === 'true') return true;
-    if (inv.reservationNo || inv.reservationId || inv.reservation_id) return true;
-    return false;
-  };
 
   // Invoice list (for the table): show all invoices fetched (already date-filtered by API)
   const directValidatedInvoices = safeInvoices.filter(inv => {
@@ -326,12 +319,12 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
                     >
                       <td className="p-3 font-semibold text-foreground/90 text-[11px]">
                         <div>{inv.invoiceNumber}</div>
-                        {inv.isReservation && (
+                        {isReservationInvoice(inv) && (
                           <span className="mt-1 inline-block text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
                             🏷️ Fin de Réservation
                           </span>
                         )}
-                        {inv.isDelivery && (
+                        {isDeliveryInvoice(inv) && (
                           <span className="mt-1 inline-block text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">
                             🚚 Livraison
                           </span>
@@ -403,12 +396,12 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
                   </div>
                 </div>
 
-                {previewInvoice.isReservation && (
+                {isReservationInvoice(previewInvoice) && (
                   <div className="bg-purple-100 border border-purple-300 text-purple-900 rounded-lg p-2 text-center text-xs font-bold">
                     🏷️ FIN DE RÉSERVATION ({previewInvoice.reservationNo || 'RÉSERVÉ'})
                   </div>
                 )}
-                {previewInvoice.isDelivery && (
+                {isDeliveryInvoice(previewInvoice) && (
                   <div className="bg-sky-100 border border-sky-300 text-sky-900 rounded-lg p-2 text-center text-xs font-bold">
                     🚚  LIVRAISON COMPLETE ({previewInvoice.deliveryNo || previewInvoice.invoiceNumber})
                     {previewInvoice.deliveryAddress && <div className="font-normal text-[11px] mt-0.5">📍 {previewInvoice.deliveryAddress}</div>}

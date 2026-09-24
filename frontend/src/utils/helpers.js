@@ -1,3 +1,21 @@
+export const isReservationInvoice = (inv) => {
+  if (!inv || typeof inv !== 'object') return false;
+  if (inv.isReservation === true || inv.isReservation === 1 || inv.isReservation === '1' || inv.isReservation === 'true') return true;
+  if (inv.isReservationInvoice === true || inv.isReservationInvoice === 1 || inv.isReservationInvoice === '1' || inv.isReservationInvoice === 'true') return true;
+  if (inv.reservationNo && String(inv.reservationNo).trim().length > 0) return true;
+  if (inv.invoiceNumber && String(inv.invoiceNumber).startsWith('RES-')) return true;
+  return false;
+};
+
+export const isDeliveryInvoice = (inv) => {
+  if (!inv || typeof inv !== 'object') return false;
+  if (inv.isDelivery === true || inv.isDelivery === 1 || inv.isDelivery === '1' || inv.isDelivery === 'true') return true;
+  if (inv.deliveryNo && String(inv.deliveryNo).trim().length > 0) return true;
+  if (inv.deliveryStatus && String(inv.deliveryStatus).trim().length > 0) return true;
+  if (inv.invoiceNumber && String(inv.invoiceNumber).startsWith('LIV-')) return true;
+  return false;
+};
+
 export const formatFCFA = (amount = 0) =>
   new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(amount) + ' FCFA';
 
@@ -149,7 +167,9 @@ export const triggerPrint = (invoiceData) => {
   const hasName = clientNameOnly && clientNameOnly !== 'Client de passage';
   const hasPhone = Boolean(clientPhoneStr);
 
-  const isDelivery = invoiceData.isDelivery;
+  const isDelivery = isDeliveryInvoice(invoiceData);
+  const isReservation = isReservationInvoice(invoiceData);
+
   let deliveryStatusLabel = 'ENREGISTRÉE';
   if (invoiceData.deliveryStatus === 'IN_DELIVERY') deliveryStatusLabel = 'EN COURS DE LIVRAISON';
   else if (invoiceData.deliveryStatus === 'DELIVERED') deliveryStatusLabel = 'LIVRÉE';
@@ -185,13 +205,13 @@ export const triggerPrint = (invoiceData) => {
   ` : `
     <div style="text-align:center;margin-bottom:2px;">
       <h2 style="margin:0;font-size:16pt;font-weight:bold;letter-spacing:2px;">JOEL SHOP</h2>
-      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">${isDelivery ? '─── BON DE LIVRAISON ───' : (invoiceData.isReservation ? '─── FACTURE DE RÉSERVATION ───' : '─── TICKET DE CAISSE ───')}</p>
+      <p style="margin:2px 0;font-size:9pt;letter-spacing:1px;font-weight:bold;">${isDelivery ? '─── BON DE LIVRAISON ───' : (isReservation ? '─── FACTURE DE RÉSERVATION ───' : '─── TICKET DE CAISSE ───')}</p>
       <p style="margin:2px 0;font-size:8.5pt;font-weight:bold;">NIU: P079216781512Z</p>
     </div>
     <p style="margin:3px 0;border-bottom:1.5px dashed #000;"></p>
     <div style="font-size:9pt;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
-        <span>N° ${isDelivery ? 'Livraison' : (invoiceData.isReservation ? 'Facture Résa' : 'Ticket')}:</span>
+        <span>N° ${isDelivery ? 'Livraison' : (isReservation ? 'Facture Résa' : 'Ticket')}:</span>
         <span style="font-weight:bold;word-break:break-all;">${isDelivery && invoiceData.deliveryNo ? invoiceData.deliveryNo : invoiceData.invoiceNumber}</span>
       </div>
       ${isDelivery ? `
@@ -217,13 +237,31 @@ export const triggerPrint = (invoiceData) => {
         <span>Adresse livraison:</span>
         <div style="font-weight:bold;word-break:break-word;margin-top:1px;">${invoiceData.deliveryAddress}</div>
       </div>` : ''}
+      ${isDelivery && invoiceData.deliveryPerson ? `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;margin:2px 0;">
+        <span>Livreur:</span>
+        <span style="font-weight:bold;word-break:break-word;text-align:right;">🛵 ${invoiceData.deliveryPerson}</span>
+      </div>` : ''}
     </div>
     <p style="margin:5px 0;border-bottom:1.5px dashed #000;"></p>
     ${itemsRows}
     <p style="margin:5px 0;border-top:2px solid #000;border-bottom:2px solid #000;"></p>
-    <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:5px;">
-      <span>TOTAL À PAYER:</span><span style="word-break:break-all;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
-    </div>
+    ${(isDelivery && Number(invoiceData.deliveryFee || 0) > 0) ? `
+      <div style="font-size:9.5pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:3px;">
+        <span>Sous-total articles:</span><span>${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      <div style="font-size:9.5pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:2px;">
+        <span>Frais de transport:</span><span>${Math.round(invoiceData.deliveryFee).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+      <p style="margin:4px 0;border-top:1px dashed #000;"></p>
+      <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:3px;">
+        <span>TOTAL À PAYER:</span><span style="word-break:break-all;">${Math.round(Number(invoiceData.totalAmount) + Number(invoiceData.deliveryFee)).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+    ` : `
+      <div style="font-size:11pt;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:5px;">
+        <span>TOTAL À PAYER:</span><span style="word-break:break-all;">${Math.round(invoiceData.totalAmount).toLocaleString('fr-FR')} FCFA</span>
+      </div>
+    `}
     <p style="text-align:center;margin-top:10px;font-size:8.5pt;font-weight:bold;border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;">
       Un article vendu n'est ni remboursable ni changeable
     </p>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BarChart3, User as UserIcon, Settings, Award, Clock, Users as UsersIcon, Truck } from 'lucide-react';
+import { BarChart3, User as UserIcon, Settings, Award, Clock, Users as UsersIcon, Truck, PackageSearch } from 'lucide-react';
 import { triggerPrint, getTodayDateStr, cx } from '../utils/helpers';
 import Dashboard from './admin/Dashboard';
 import Users from './admin/Users';
 import CategoriesView from './admin/Categories';
 import ZReportView from './admin/ZReport';
+import ProductSalesReport from './admin/ProductSalesReport';
 import ReservationsPanel from './admin/ReservationsPanel';
 import ClientsPanel from './admin/ClientsPanel';
 import DeliveriesPanel from './admin/DeliveriesPanel';
@@ -136,6 +137,7 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
     { id: 'users', label: 'Caissières', icon: <UserIcon className="h-4 w-4" /> },
     { id: 'categories', label: 'Catégories', icon: <Settings className="h-4 w-4" /> },
     { id: 'z-report', label: 'Rapport Z', icon: <Award className="h-4 w-4" /> },
+    { id: 'product-report', label: 'Rapport Produits', icon: <PackageSearch className="h-4 w-4" /> },
   ];
 
   return (
@@ -213,6 +215,10 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
 
           {adminTab === 'z-report' && (
             <ZReportView zReportData={zReportData} onGenerate={generateZReport} onPrint={(data) => triggerPrint(data)} />
+          )}
+
+          {adminTab === 'product-report' && (
+            <ProductSalesReport />
           )}
         </div>
       </div>

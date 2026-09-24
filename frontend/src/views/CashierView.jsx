@@ -47,6 +47,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
   // Delivery Mode state
   const [showDeliveryMode, setShowDeliveryMode] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryFee, setDeliveryFee] = useState('');
 
   const [expandedCatIds, setExpandedCatIds] = useState([]);
 
@@ -187,7 +188,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
       setReservationAdvanceInput('');
       setShowReservationMode(false);
       setIsSubmittingOrder(false);
-      setActiveTab('reservations');
+      // Stay on sales page (do not switch tabs)
     } catch {
       alert('Erreur réseau');
       setIsSubmittingOrder(false);
@@ -219,6 +220,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
           clientPhone: clientPhone.trim() || null,
           isDelivery: true,
           deliveryAddress: deliveryAddress.trim() || null,
+          deliveryFee: parseFloat(deliveryFee) || 0,
         })
       });
       const invoiceData = await res.json();
@@ -233,6 +235,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
       setClientName('');
       setClientPhone('');
       setDeliveryAddress('');
+      setDeliveryFee('');
       setShowDeliveryMode(false);
       setIsSubmittingOrder(false);
       // Stay on sales page (do not switch tabs)
@@ -538,8 +541,8 @@ export default function CashierView({ categories, currentUser, serverOnline, act
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex-1 min-w-[200px]">
-                    <label className="text-[10px] uppercase font-bold text-sky-300/80 mb-1 block flex items-center gap-1">
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-[10px] uppercase font-bold text-sky-300/80 mb-1 flex items-center gap-1">
                       <MapPin className="h-3 w-3" /> Adresse de livraison (optionnel)
                     </label>
                     <input
@@ -547,7 +550,20 @@ export default function CashierView({ categories, currentUser, serverOnline, act
                       placeholder="Ex: Rue des Fleurs, Quartier Nord..."
                       value={deliveryAddress}
                       onChange={(e) => setDeliveryAddress(e.target.value)}
-                      className={cx(inputCls, 'bg-zinc-900 border-sky-400/60 text-foreground focus:border-sky-400')}
+                      className={cx(inputCls, 'bg-zinc-900 border-sky-400/60 text-foreground focus:border-sky-400 text-xs')}
+                    />
+                  </div>
+                  <div className="w-44">
+                    <label className="text-[10px] uppercase font-bold text-sky-300/80 mb-1 flex items-center gap-1">
+                      🚚 Frais de transport (FCFA)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="Ex: 1000 (Non comptabilisé)"
+                      value={deliveryFee}
+                      onChange={(e) => setDeliveryFee(e.target.value)}
+                      className={cx(inputCls, 'bg-zinc-900 border-sky-400/60 text-foreground focus:border-sky-400 text-xs font-mono font-bold')}
                     />
                   </div>
                   <div className="self-end">
@@ -555,7 +571,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
                       type="button"
                       onClick={handleConfirmDelivery}
                       disabled={isSubmittingOrder || (!clientName.trim() && !clientPhone.trim()) || !serverOnline}
-                      className="rounded-xl bg-sky-500 px-6 py-3 text-xs font-black text-white hover:bg-sky-400 disabled:opacity-30 transition cursor-pointer shadow-lg shadow-sky-500/20 flex items-center gap-2"
+                      className="rounded-xl bg-sky-500 px-5 py-2.5 text-xs font-black text-white hover:bg-sky-400 disabled:opacity-30 transition cursor-pointer shadow-lg shadow-sky-500/20 flex items-center gap-2"
                     >
                       <Truck className="h-4 w-4" />
                       <span>{isSubmittingOrder ? 'Enregistrement...' : 'Valider & Imprimer Bon'}</span>
