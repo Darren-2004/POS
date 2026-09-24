@@ -42,13 +42,17 @@ export default function DeliveriesView({ currentUser }) {
 
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        setDeliveries(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setDeliveries(list);
+        return list; // retourner les données pour usage immédiat
       } else {
         setDeliveries([]);
+        return [];
       }
     } catch (err) {
       console.error('Error fetching deliveries:', err);
       setDeliveries([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -77,15 +81,17 @@ export default function DeliveriesView({ currentUser }) {
     return () => clearTimeout(timer);
   }, [searchQuery, fetchDeliveries]);
 
-  // Filtered deliveries for display (by driver filter)
+  // Quand un filtre livreur est actif, n'afficher que ses livraisons EN COURS
   const displayedDeliveries = deliveries.filter(d => {
     if (selectedDriverFilter !== 'ALL') {
-      return (d.deliveryPerson || '').trim().toLowerCase() === selectedDriverFilter.trim().toLowerCase();
+      const sameDriver = (d.deliveryPerson || '').trim().toLowerCase() === selectedDriverFilter.trim().toLowerCase();
+      // On ne montre que les EN COURS pour ce livreur (les livrées disparaissent)
+      return sameDriver && d.deliveryStatus === 'IN_DELIVERY';
     }
     return true;
   });
 
-  // Extract active driver names from current IN_DELIVERY deliveries
+  // N'afficher dans les pills que les livreurs ayant encore des livraisons EN COURS
   const activeDrivers = Array.from(new Set(
     deliveries
       .filter(d => d.deliveryStatus === 'IN_DELIVERY' && d.deliveryPerson)
@@ -163,7 +169,16 @@ export default function DeliveriesView({ currentUser }) {
           setSelectedIds([]);
         }
       }
-      fetchDeliveries();
+      const freshDeliveries = await fetchDeliveries();
+      // Reset filtre si le livreur n'a plus rien en cours
+      setSelectedDriverFilter(prev => {
+        if (prev === 'ALL') return 'ALL';
+        const stillHasInDelivery = freshDeliveries.some(
+          d => (d.deliveryPerson || '').trim().toLowerCase() === prev.trim().toLowerCase()
+            && d.deliveryStatus === 'IN_DELIVERY'
+        );
+        return stillHasInDelivery ? prev : 'ALL';
+      });
     } catch (err) {
       console.error('Unassign driver error:', err);
       showToast("❌ Échec du retrait du livreur", "error");
@@ -230,13 +245,26 @@ export default function DeliveriesView({ currentUser }) {
       setPaymentModalOpen(false);
       setDriverModalOpen(false);
 
-      // If a driver was assigned, switch to that driver filter
+      // Si un livreur vient d'être assigné, basculer sur son filtre
       if (extraParams.deliveryPerson) {
         setSelectedDriverFilter(extraParams.deliveryPerson);
       }
 
-      await fetchDeliveries();
+      // Fetch les données fraîches et vérifier immédiatement si le filtre livreur doit être réinitialisé
+      const freshDeliveries = await fetchDeliveries();
       await fetchSavedDrivers();
+
+      // Reset du filtre livreur si le livreur actif n'a plus de livraisons EN COURS
+      // (on utilise les données fraîches directement, pas le state qui peut être décalé)
+      setSelectedDriverFilter(prev => {
+        if (prev === 'ALL') return 'ALL'; // Déjà sur tout, on ne touche pas
+        if (extraParams.deliveryPerson) return extraParams.deliveryPerson; // On vient d'assigner, on garde
+        const stillHasInDelivery = freshDeliveries.some(
+          d => (d.deliveryPerson || '').trim().toLowerCase() === prev.trim().toLowerCase()
+            && d.deliveryStatus === 'IN_DELIVERY'
+        );
+        return stillHasInDelivery ? prev : 'ALL';
+      });
     } catch (err) {
       console.error('Update status error:', err);
       showToast("❌ Échec de la mise à jour", "error");
@@ -251,10 +279,42 @@ export default function DeliveriesView({ currentUser }) {
       showToast("⚠️ Veuillez préciser le nom du livreur", "warning");
       return;
     }
-    handleUpdateStatus('IN_DELIVERY', targetInDeliveryItem, {
-      deliveryPersonConfirmed: true,
-      deliveryPerson: driverName
-    });
+    // Si la livraison est déjà LIVRÉE, on assigne juste le livreur sans changer le statut
+    const isAlreadyDelivered = targetInDeliveryItem !== 'BULK' && targetInDeliveryItem?.deliveryStatus === 'DELIVERED';
+    if (isAlreadyDelivered) {
+      assignDriverOnly(targetInDeliveryItem, driverName);
+    } else {
+      handleUpdateStatus('IN_DELIVERY', targetInDeliveryItem, {
+        deliveryPersonConfirmed: true,
+        deliveryPerson: driverName
+      });
+    }
+  };
+
+  // Assigner uniquement le livreur sans changer le statut (pour livraisons déjà livrées)
+  const assignDriverOnly = async (deliveryItem, driverName) => {
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/deliveries/${deliveryItem.id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ASSIGN_DRIVER_ONLY', deliveryPerson: driverName })
+      });
+      if (res.ok) {
+        showToast(`✅ Livreur "${driverName}" assigné rétroactivement`, 'success');
+        setDriverModalOpen(false);
+        setSelectedDriverFilter(driverName);
+        await fetchDeliveries();
+        await fetchSavedDrivers();
+      } else {
+        showToast('❌ Erreur lors de l\'assignation du livreur', 'error');
+      }
+    } catch (err) {
+      console.error('Assign driver only error:', err);
+      showToast('❌ Erreur réseau', 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getLogisticsBadge = (status) => {
@@ -472,7 +532,10 @@ export default function DeliveriesView({ currentUser }) {
             </button>
 
             {activeDrivers.map(driverName => {
-              const driverInProgCount = deliveries.filter(d => (d.deliveryPerson || '').trim().toLowerCase() === driverName.toLowerCase() && d.deliveryStatus === 'IN_DELIVERY').length;
+              const driverInProgCount = deliveries.filter(
+                d => (d.deliveryPerson || '').trim().toLowerCase() === driverName.toLowerCase()
+                  && d.deliveryStatus === 'IN_DELIVERY'
+              ).length;
               const isSelected = selectedDriverFilter.toLowerCase() === driverName.toLowerCase();
 
               return (
@@ -487,7 +550,7 @@ export default function DeliveriesView({ currentUser }) {
                   )}
                 >
                   <span>🛵 {driverName}</span>
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-amber-400/20 text-amber-300 font-bold">
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-400/20 text-amber-300 font-bold">
                     {driverInProgCount} en cours
                   </span>
                 </button>
@@ -671,15 +734,20 @@ export default function DeliveriesView({ currentUser }) {
                         </button>
                       )}
 
-                      {/* Action 2: Passer en cours (Attribuer livreur) - Uniquement si EN ATTENTE */}
-                      {del.deliveryStatus === 'PENDING' && (
+                      {/* Action 2: Passer en cours (Attribuer livreur) - Si EN ATTENTE ou si LIVRÉE sans livreur assigné (expédition) */}
+                      {(del.deliveryStatus === 'PENDING' || (del.deliveryStatus === 'DELIVERED' && !del.deliveryPerson)) && (
                         <button
                           onClick={() => handleUpdateStatus('IN_DELIVERY', del)}
-                          title="Passer en cours de livraison (Attribuer livreur)"
-                          className="px-2 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1 text-[11px] font-semibold"
+                          title={del.deliveryStatus === 'DELIVERED' ? 'Assigner un livreur (rétroactivement)' : 'Passer en cours de livraison (Attribuer livreur)'}
+                          className={cx(
+                            'px-2 py-1 rounded-lg border transition flex items-center gap-1 text-[11px] font-semibold',
+                            del.deliveryStatus === 'DELIVERED'
+                              ? 'bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border-sky-500/30'
+                              : 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/30'
+                          )}
                         >
                           <Truck className="h-3.5 w-3.5" />
-                          <span className="hidden xl:inline">En cours</span>
+                          <span className="hidden xl:inline">{del.deliveryStatus === 'DELIVERED' ? 'Livreur' : 'En cours'}</span>
                         </button>
                       )}
 
@@ -737,11 +805,20 @@ export default function DeliveriesView({ currentUser }) {
           <div className="bg-zinc-900 border border-blue-500/40 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl relative">
             <h3 className="text-base font-bold text-foreground flex items-center gap-2">
               <Truck className="h-5 w-5 text-blue-400" />
-              {targetInDeliveryItem === 'BULK' ? `Attribution du livreur (${selectedIds.length} livraisons)` : 'Attribution du livreur'}
+              {targetInDeliveryItem === 'BULK'
+                ? `Attribution du livreur (${selectedIds.length} livraisons)`
+                : targetInDeliveryItem?.deliveryStatus === 'DELIVERED'
+                  ? 'Assigner un livreur (livraison déjà livrée)'
+                  : 'Attribution du livreur'}
             </h3>
 
             <p className="text-xs text-foreground/70 leading-relaxed">
-              Précisez le nom du livreur qui prend en charge la livraison. Un filtre temporaire avec son nom sera créé automatiquement.
+              {targetInDeliveryItem?.deliveryStatus === 'DELIVERED'
+                ? <>ℹ️ Cette livraison est déjà marquée comme <strong>livrée</strong>. Assignez un livreur pour l'associer dans les statistiques. Le statut ne changera pas.
+                  <span className="block mt-1 text-gold/80">📦 Utile pour les expéditions payées d'avance.</span>
+                </>
+                : 'Précisez le nom du livreur qui prend en charge la livraison. Un filtre temporaire avec son nom sera créé automatiquement.'
+              }
             </p>
 
             {/* Input with Auto-complete */}
@@ -801,7 +878,11 @@ export default function DeliveriesView({ currentUser }) {
                 onClick={confirmDriverAssignment}
                 className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-xs shadow flex items-center gap-1.5"
               >
-                {submitting ? 'Enregistrement...' : '🚀 Valider & Passer en cours'}
+                {submitting ? 'Enregistrement...' : (
+                  targetInDeliveryItem?.deliveryStatus === 'DELIVERED'
+                    ? '📋 Assigner le livreur'
+                    : '🚀 Valider & Passer en cours'
+                )}
               </button>
             </div>
           </div>
@@ -1005,16 +1086,22 @@ export default function DeliveriesView({ currentUser }) {
                   </button>
                 )}
 
-                {selectedDelivery.deliveryStatus === 'PENDING' && (
+                {(selectedDelivery.deliveryStatus === 'PENDING' || (selectedDelivery.deliveryStatus === 'DELIVERED' && !selectedDelivery.deliveryPerson)) && (
                   <button
                     onClick={() => {
                       const del = selectedDelivery;
                       setSelectedDelivery(null);
                       openInDeliveryModal(del);
                     }}
-                    className="px-3 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs flex items-center gap-1.5"
+                    className={cx(
+                      'px-3 py-2 rounded-xl text-white font-bold text-xs flex items-center gap-1.5',
+                      selectedDelivery.deliveryStatus === 'DELIVERED'
+                        ? 'bg-sky-500 hover:bg-sky-600'
+                        : 'bg-blue-500 hover:bg-blue-600'
+                    )}
                   >
-                    <Truck className="h-4 w-4" /> Passer en cours
+                    <Truck className="h-4 w-4" />
+                    {selectedDelivery.deliveryStatus === 'DELIVERED' ? 'Assigner livreur' : 'Passer en cours'}
                   </button>
                 )}
 

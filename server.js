@@ -1230,6 +1230,13 @@ app.put('/api/deliveries/:id/status', async (req, res) => {
     if (action === 'UNASSIGN') {
       updateData.deliveryPerson = null;
       updateData.deliveryStatus = 'PENDING';
+    } else if (action === 'ASSIGN_DRIVER_ONLY') {
+      // Assigner un livreur sans changer le statut (pour livraisons déjà livrées)
+      if (deliveryPerson) {
+        const name = String(deliveryPerson).trim();
+        updateData.deliveryPerson = name;
+        upsertDeliveryPerson(name).catch(() => {});
+      }
     } else if (status) {
       if (!['PENDING', 'IN_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(status)) {
         return res.status(400).json({ error: 'Statut de livraison invalide' });
