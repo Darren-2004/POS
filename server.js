@@ -468,40 +468,36 @@ app.get('/api/clients/stats', async (req, res) => {
 // Récupérer tous les profils utilisateurs pour l'écran de sélection
 app.get('/api/users', async (req, res) => {
   try {
+    await ensureUserTableAndColumnsExist();
     const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        permissions: true,
-        needsPinReset: true
-      },
-      orderBy: {
-        name: 'asc'
-      }
+      orderBy: { name: 'asc' }
     });
-    res.json(users);
+    const formatted = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      role: u.role || 'CASHIER',
+      permissions: u.permissions || 'ALL',
+      needsPinReset: Boolean(u.needsPinReset)
+    }));
+    return res.json(formatted);
   } catch (error) {
-    console.error('GET /api/users error:', error.message);
-    // If table column error (e.g. missing permissions or needsPinReset on older DB), run auto-migration and retry
+    console.error('GET /api/users initial error:', error.message || error);
     try {
-      await ensureUserColumnsExist();
-      const users = await prisma.user.findMany({
-        select: {
-          id: true,
-          name: true,
-          role: true,
-          permissions: true,
-          needsPinReset: true
-        },
-        orderBy: {
-          name: 'asc'
-        }
+      const rawUsers = await prisma.$queryRawUnsafe(`SELECT * FROM "User" ORDER BY name ASC`);
+      const formatted = (Array.isArray(rawUsers) ? rawUsers : []).map(u => ({
+        id: u.id,
+        name: u.name,
+        role: u.role || 'CASHIER',
+        permissions: u.permissions || 'ALL',
+        needsPinReset: Boolean(u.needsPinReset)
+      }));
+      return res.json(formatted);
+    } catch (fallbackErr) {
+      console.error('GET /api/users fallback error:', fallbackErr.message || fallbackErr);
+      return res.status(500).json({ 
+        error: 'Erreur lors de la récupération des utilisateurs',
+        details: String(fallbackErr.message || error.message || fallbackErr)
       });
-      return res.json(users);
-    } catch (retryErr) {
-      console.error('GET /api/users retry error:', retryErr.message);
-      res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs' });
     }
   }
 });
@@ -3255,8 +3251,18 @@ async function ensureDeliveryColumnsExist() {
   }
 }
 
-async function ensureUserColumnsExist() {
+async function ensureUserTableAndColumnsExist() {
   try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "User" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL UNIQUE,
+        "pin" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'CASHIER',
+        "permissions" TEXT DEFAULT 'ALL',
+        "needsPinReset" BOOLEAN DEFAULT 1
+      )
+    `);
     const columns = await prisma.$queryRawUnsafe(`PRAGMA table_info("User")`);
     if (Array.isArray(columns)) {
       const colNames = columns.map(c => c.name);
@@ -3268,9 +3274,13 @@ async function ensureUserColumnsExist() {
         await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "needsPinReset" BOOLEAN DEFAULT 1`);
         console.log('✅ Auto-migration: Colonne "needsPinReset" ajoutée à User');
       }
+      if (!colNames.includes('role')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "role" TEXT DEFAULT 'CASHIER'`);
+        console.log('✅ Auto-migration: Colonne "role" ajoutée à User');
+      }
     }
   } catch (err) {
-    console.warn('⚠️ Verification automatique des colonnes User:', err.message);
+    console.warn('⚠️ Verification automatique de la table et colonnes User:', err.message);
   }
 }
 
@@ -3282,7 +3292,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
   console.log(`================================================`);
-  ensureUserColumnsExist().catch(err => console.error('Ensure user columns error:', err));
+  ensureUserTableAndColumnsExist().catch(err => console.error('Ensure user columns error:', err));
   ensureDeliveryColumnsExist().catch(err => console.error('Ensure delivery columns error:', err));
   syncExistingClients().catch(err => console.error('Sync clients error:', err));
   syncExistingDeliveryPersons().catch(err => console.error('Sync delivery persons error:', err));

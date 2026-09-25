@@ -1,5 +1,4 @@
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -11,13 +10,25 @@ const __dirname = path.dirname(__filename);
 let dbPath = path.resolve(__dirname, 'dev.db');
 const prismaDbPath = path.resolve(__dirname, 'prisma', 'dev.db');
 
-// Si dev.db n'existe pas à la racine mais existe dans ./prisma/dev.db (créé par npx prisma db push)
 if (!fs.existsSync(dbPath) && fs.existsSync(prismaDbPath)) {
   dbPath = prismaDbPath;
 }
 
-const adapter = new PrismaBetterSqlite3({
-  url: `file:${dbPath}`
-});
+let prismaInstance;
 
-export const prisma = new PrismaClient({ adapter });
+try {
+  const { PrismaBetterSqlite3 } = await import('@prisma/adapter-better-sqlite3');
+  const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
+  prismaInstance = new PrismaClient({ adapter });
+} catch (err) {
+  console.warn('⚠️ Fallback vers PrismaClient standard:', err.message);
+  prismaInstance = new PrismaClient({
+    datasources: {
+      db: {
+        url: `file:${dbPath}`
+      }
+    }
+  });
+}
+
+export const prisma = prismaInstance;
