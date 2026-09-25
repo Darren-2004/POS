@@ -33,6 +33,42 @@ app.get('/api/heartbeat', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Endpoint de diagnostic pour aider à déboguer les problèmes chez le client
+app.get('/api/debug', async (req, res) => {
+  const info = { timestamp: new Date().toISOString(), nodeVersion: process.version };
+  try {
+    const { default: Database } = await import('better-sqlite3');
+    let dbFile = path.resolve(__dirname, 'dev.db');
+    const prismaDb = path.resolve(__dirname, 'prisma', 'dev.db');
+    if (!existsSync(dbFile) && existsSync(prismaDb)) dbFile = prismaDb;
+    info.dbPath = dbFile;
+    info.dbExists = existsSync(dbFile);
+    info.walExists = existsSync(`${dbFile}-wal`);
+    info.shmExists = existsSync(`${dbFile}-shm`);
+    if (info.dbExists) {
+      const db = new Database(dbFile, { readonly: true });
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
+      info.tables = tables;
+      if (tables.includes('User')) {
+        const userCount = db.prepare('SELECT count(*) as c FROM "User"').get();
+        info.userCount = userCount.c;
+        const cols = db.prepare('PRAGMA table_info("User")').all().map(c => c.name);
+        info.userColumns = cols;
+      }
+      if (tables.includes('Category')) {
+        const catCount = db.prepare('SELECT count(*) as c FROM "Category"').get();
+        info.categoryCount = catCount.c;
+      }
+      db.close();
+    }
+    info.status = 'ok';
+  } catch (e) {
+    info.status = 'error';
+    info.error = e.message;
+  }
+  res.json(info);
+});
+
 // Helper: given a local date string 'YYYY-MM-DD', return {start, end} as UTC Date objects
 // that correspond to midnight→23:59:59 in LOCAL time (accounting for TZ offset).
 const localDayRange = (dateStr) => {
@@ -467,11 +503,10 @@ app.get('/api/clients/stats', async (req, res) => {
 
 // Récupérer tous les profils utilisateurs pour l'écran de sélection
 app.get('/api/users', async (req, res) => {
+  // Méthode 1: Prisma ORM avec migration automatique
   try {
     await ensureUserTableAndColumnsExist();
-    const users = await prisma.user.findMany({
-      orderBy: { name: 'asc' }
-    });
+    const users = await prisma.user.findMany({ orderBy: { name: 'asc' } });
     const formatted = users.map(u => ({
       id: u.id,
       name: u.name,
@@ -481,24 +516,51 @@ app.get('/api/users', async (req, res) => {
     }));
     return res.json(formatted);
   } catch (error) {
-    console.error('GET /api/users initial error:', error.message || error);
-    try {
-      const rawUsers = await prisma.$queryRawUnsafe(`SELECT * FROM "User" ORDER BY name ASC`);
-      const formatted = (Array.isArray(rawUsers) ? rawUsers : []).map(u => ({
-        id: u.id,
-        name: u.name,
-        role: u.role || 'CASHIER',
-        permissions: u.permissions || 'ALL',
-        needsPinReset: Boolean(u.needsPinReset)
-      }));
-      return res.json(formatted);
-    } catch (fallbackErr) {
-      console.error('GET /api/users fallback error:', fallbackErr.message || fallbackErr);
-      return res.status(500).json({ 
-        error: 'Erreur lors de la récupération des utilisateurs',
-        details: String(fallbackErr.message || error.message || fallbackErr)
-      });
-    }
+    console.error('GET /api/users [Prisma ORM] error:', error.message || error);
+  }
+
+  // Méthode 2: Prisma raw SQL
+  try {
+    const rawUsers = await prisma.$queryRawUnsafe(`SELECT * FROM "User" ORDER BY name ASC`);
+    const formatted = (Array.isArray(rawUsers) ? rawUsers : []).map(u => ({
+      id: u.id,
+      name: u.name,
+      role: u.role || 'CASHIER',
+      permissions: u.permissions || 'ALL',
+      needsPinReset: Boolean(u.needsPinReset)
+    }));
+    console.log(`GET /api/users [Prisma raw SQL] OK — ${formatted.length} users`);
+    return res.json(formatted);
+  } catch (rawErr) {
+    console.error('GET /api/users [Prisma raw SQL] error:', rawErr.message || rawErr);
+  }
+
+  // Méthode 3: better-sqlite3 directement (contourne Prisma complètement)
+  try {
+    const { default: Database } = await import('better-sqlite3');
+    let dbFile = path.resolve(__dirname, 'dev.db');
+    const prismaDb = path.resolve(__dirname, 'prisma', 'dev.db');
+    if (!existsSync(dbFile) && existsSync(prismaDb)) dbFile = prismaDb;
+
+    const db = new Database(dbFile, { readonly: true });
+    const rows = db.prepare(`SELECT * FROM "User" ORDER BY name ASC`).all();
+    db.close();
+
+    const formatted = rows.map(u => ({
+      id: u.id,
+      name: u.name,
+      role: u.role || 'CASHIER',
+      permissions: u.permissions || 'ALL',
+      needsPinReset: Boolean(u.needsPinReset)
+    }));
+    console.log(`GET /api/users [better-sqlite3 direct] OK — ${formatted.length} users`);
+    return res.json(formatted);
+  } catch (sqliteErr) {
+    console.error('GET /api/users [better-sqlite3 direct] error:', sqliteErr.message || sqliteErr);
+    return res.status(500).json({
+      error: 'Erreur lors de la récupération des utilisateurs',
+      details: String(sqliteErr.message || sqliteErr)
+    });
   }
 });
 
@@ -689,18 +751,37 @@ app.delete('/api/users/:id', async (req, res) => {
 
 // Récupérer toutes les catégories avec leurs sous-catégories
 app.get('/api/categories', async (req, res) => {
+  // Méthode 1: Prisma ORM
   try {
     const categories = await prisma.category.findMany({
-      include: {
-        subCategories: {
-          orderBy: { name: 'asc' }
-        }
-      },
+      include: { subCategories: { orderBy: { name: 'asc' } } },
       orderBy: { name: 'asc' }
     });
-    res.json(categories);
+    return res.json(categories);
   } catch (error) {
-    res.status(500).json({ error: 'Erreur lors de la récupération des catégories' });
+    console.error('GET /api/categories [Prisma ORM] error:', error.message || error);
+  }
+
+  // Méthode 2: better-sqlite3 directement
+  try {
+    const { default: Database } = await import('better-sqlite3');
+    let dbFile = path.resolve(__dirname, 'dev.db');
+    const prismaDb = path.resolve(__dirname, 'prisma', 'dev.db');
+    if (!existsSync(dbFile) && existsSync(prismaDb)) dbFile = prismaDb;
+
+    const db = new Database(dbFile, { readonly: true });
+    const cats = db.prepare(`SELECT * FROM "Category" ORDER BY name ASC`).all();
+    const subs = db.prepare(`SELECT * FROM "SubCategory" ORDER BY name ASC`).all();
+    db.close();
+
+    const result = cats.map(cat => ({
+      ...cat,
+      subCategories: subs.filter(s => s.categoryId === cat.id)
+    }));
+    return res.json(result);
+  } catch (sqliteErr) {
+    console.error('GET /api/categories [better-sqlite3] error:', sqliteErr.message || sqliteErr);
+    return res.status(500).json({ error: 'Erreur lors de la récupération des catégories', details: sqliteErr.message });
   }
 });
 
