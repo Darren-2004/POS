@@ -266,6 +266,27 @@ export default function CashierInvoicesView({ currentUser, serverOnline }) {
                 ))
               )}
             </tbody>
+            <tfoot className="sticky bottom-0 bg-zinc-900 border-t-2 border-gold/40 text-xs font-bold z-10 shadow-2xl">
+              {loading ? (
+                <tr className="bg-zinc-900/95 backdrop-blur">
+                  <td colSpan={7} className="px-4 py-3 text-center text-foreground/30 italic text-xs animate-pulse">
+                    Calcul des totaux...
+                  </td>
+                </tr>
+              ) : (
+                <tr className="bg-zinc-900/95 backdrop-blur">
+                  <td colSpan={4} className="px-4 py-3 text-gold uppercase tracking-wider font-extrabold">
+                    TOTAL VENTES ({filteredInvoices.filter(i => i.status === 'VALIDATED').length}/{filteredInvoices.length} validée{filteredInvoices.length > 1 ? 's' : ''})
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-gold text-base font-black">
+                    {formatFCFA(filteredInvoices.filter(i => i.status === 'VALIDATED').reduce((sum, inv) => sum + (parseFloat(inv.totalAmount) || 0), 0))}
+                  </td>
+                  <td colSpan={2} className="px-4 py-3 text-center text-foreground/40 text-[10px]">
+                    Filtre actif
+                  </td>
+                </tr>
+              )}
+            </tfoot>
           </table>
         </div>
       </div>

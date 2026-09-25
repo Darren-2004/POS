@@ -473,6 +473,7 @@ app.get('/api/users', async (req, res) => {
         id: true,
         name: true,
         role: true,
+        permissions: true,
         needsPinReset: true
       },
       orderBy: {
@@ -481,6 +482,7 @@ app.get('/api/users', async (req, res) => {
     });
     res.json(users);
   } catch (error) {
+    console.error('GET /api/users error:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs' });
   }
 });
@@ -511,6 +513,7 @@ app.post('/api/auth/login', async (req, res) => {
       id: user.id,
       name: user.name,
       role: user.role,
+      permissions: user.permissions || 'ALL',
       needsPinReset: user.needsPinReset
     });
   } catch (error) {
@@ -560,7 +563,7 @@ app.post('/api/auth/reset-pin', async (req, res) => {
 
 // Créer une caissière (Admin requis)
 app.post('/api/users', async (req, res) => {
-  const { name, pin } = req.body;
+  const { name, pin, permissions } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Nom requis' });
 
@@ -569,15 +572,18 @@ app.post('/api/users', async (req, res) => {
     if (existing) return res.status(400).json({ error: 'Un utilisateur avec ce nom existe déjà' });
 
     const initialPin = pin && String(pin).trim().length >= 4 ? String(pin).trim() : '0000';
+    const validPermissions = ['ALL', 'DIRECT_SALE', 'CUSTOMER_SERVICE'];
+    const userPermissions = validPermissions.includes(permissions) ? permissions : 'ALL';
 
     const newUser = await prisma.user.create({
       data: {
         name: name.trim(),
         pin: hashPin(initialPin),
         role: 'CASHIER',
+        permissions: userPermissions,
         needsPinReset: true
       },
-      select: { id: true, name: true, role: true, needsPinReset: true }
+      select: { id: true, name: true, role: true, permissions: true, needsPinReset: true }
     });
 
     res.status(201).json(newUser);
@@ -589,16 +595,27 @@ app.post('/api/users', async (req, res) => {
 // Mettre à jour un utilisateur (Admin requis)
 app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, role } = req.body;
+  const { name, role, pin, permissions } = req.body;
 
   try {
+    const updateData = {};
+    if (name && name.trim()) updateData.name = name.trim();
+    if (role) updateData.role = role;
+
+    const validPermissions = ['ALL', 'DIRECT_SALE', 'CUSTOMER_SERVICE'];
+    if (permissions && validPermissions.includes(permissions)) {
+      updateData.permissions = permissions;
+    }
+
+    if (pin && String(pin).trim().length >= 4) {
+      updateData.pin = hashPin(String(pin).trim());
+      updateData.needsPinReset = false;
+    }
+
     const updated = await prisma.user.update({
       where: { id },
-      data: {
-        ...(name ? { name } : {}),
-        ...(role ? { role } : {})
-      },
-      select: { id: true, name: true, role: true, needsPinReset: true }
+      data: updateData,
+      select: { id: true, name: true, role: true, permissions: true, needsPinReset: true }
     });
 
     res.json(updated);
@@ -893,7 +910,7 @@ app.delete('/api/subcategories/:id', async (req, res) => {
 
 // Liste des factures avec filtres
 app.get('/api/invoices', async (req, res) => {
-  const { date, cashierId, status, includeAllDeliveries } = req.query;
+  const { date, startDate, endDate, cashierId, status, includeAllDeliveries } = req.query;
 
   const AND = [];
 
@@ -907,22 +924,47 @@ app.get('/api/invoices', async (req, res) => {
         }
       });
     }
+  } else if (startDate && endDate) {
+    const p1 = startDate.split('-').map(Number);
+    const p2 = endDate.split('-').map(Number);
+    const s = new Date(p1[0], p1[1] - 1, p1[2], 0, 0, 0, 0);
+    const e = new Date(p2[0], p2[1] - 1, p2[2], 23, 59, 59, 999);
+    AND.push({
+      createdAt: {
+        gte: s,
+        lte: e
+      }
+    });
   }
 
   if (cashierId) {
-    AND.push({ createdById: cashierId });
+    const cashierUser = await prisma.user.findUnique({
+      where: { id: cashierId },
+      select: { name: true }
+    });
+    if (cashierUser && cashierUser.name) {
+      AND.push({
+        OR: [
+          { createdById: cashierId },
+          { deliveryPerson: { contains: cashierUser.name } }
+        ]
+      });
+    } else {
+      AND.push({ createdById: cashierId });
+    }
   }
 
   if (status) {
     AND.push({ status: status });
   }
 
-  // Tant qu'une livraison n'est pas livrée, sa facture ne doit pas apparaître dans les factures générales / comptabilité / dashboard admin
+  // Tant qu'une livraison n'est ni livrée ni payée, sa facture ne doit pas apparaître dans les factures générales / comptabilité / dashboard admin
   if (includeAllDeliveries !== 'true') {
     AND.push({
       OR: [
         { isDelivery: false },
-        { isDelivery: true, deliveryStatus: 'DELIVERED' }
+        { isDelivery: true, deliveryStatus: 'DELIVERED' },
+        { isDelivery: true, isPaid: true }
       ]
     });
   }
@@ -1160,7 +1202,7 @@ app.post('/api/delivery-persons', async (req, res) => {
 
 // GET /api/deliveries - Liste des factures de livraison
 app.get('/api/deliveries', async (req, res) => {
-  const { status, date, cashierId, q, driver } = req.query;
+  const { status, date, startDate, endDate, cashierId, q, driver } = req.query;
   try {
     const where = { isDelivery: true };
 
@@ -1173,7 +1215,18 @@ app.get('/api/deliveries', async (req, res) => {
     }
 
     if (cashierId) {
-      where.createdById = cashierId;
+      const cashierUser = await prisma.user.findUnique({
+        where: { id: cashierId },
+        select: { name: true }
+      });
+      if (cashierUser && cashierUser.name) {
+        where.OR = [
+          { createdById: cashierId },
+          { deliveryPerson: { contains: cashierUser.name } }
+        ];
+      } else {
+        where.createdById = cashierId;
+      }
     }
 
     if (date) {
@@ -1181,6 +1234,12 @@ app.get('/api/deliveries', async (req, res) => {
       if (range) {
         where.createdAt = { gte: range.start, lte: range.end };
       }
+    } else if (startDate && endDate) {
+      const p1 = startDate.split('-').map(Number);
+      const p2 = endDate.split('-').map(Number);
+      const s = new Date(p1[0], p1[1] - 1, p1[2], 0, 0, 0, 0);
+      const e = new Date(p2[0], p2[1] - 1, p2[2], 23, 59, 59, 999);
+      where.createdAt = { gte: s, lte: e };
     }
 
     if (q && String(q).trim().length > 0) {
@@ -1367,7 +1426,7 @@ app.post('/api/deliveries/bulk-status', async (req, res) => {
 
 // Liste des réservations
 app.get('/api/reservations', async (req, res) => {
-  const { status, q, date, cashierId } = req.query;
+  const { status, q, date, startDate, endDate, cashierId } = req.query;
 
   let where = {};
 
@@ -1376,6 +1435,12 @@ app.get('/api/reservations', async (req, res) => {
     if (range) {
       where.createdAt = { gte: range.start, lte: range.end };
     }
+  } else if (startDate && endDate) {
+    const p1 = startDate.split('-').map(Number);
+    const p2 = endDate.split('-').map(Number);
+    const s = new Date(p1[0], p1[1] - 1, p1[2], 0, 0, 0, 0);
+    const e = new Date(p2[0], p2[1] - 1, p2[2], 23, 59, 59, 999);
+    where.createdAt = { gte: s, lte: e };
   }
 
   if (cashierId) {
@@ -2063,12 +2128,21 @@ app.get('/api/stats', async (req, res) => {
   try {
     const now = new Date();
 
+    const cashierUser = cashierId ? await prisma.user.findUnique({ where: { id: cashierId }, select: { name: true } }) : null;
+
     const buildWhere = (start, end) => {
       const w = {
         status: 'VALIDATED',
         createdAt: { gte: start, lte: end }
       };
-      if (cashierId) w.createdById = cashierId;
+      if (cashierUser && cashierUser.name) {
+        w.OR = [
+          { createdById: cashierId },
+          { deliveryPerson: { contains: cashierUser.name } }
+        ];
+      } else if (cashierId) {
+        w.createdById = cashierId;
+      }
       return w;
     };
 
@@ -2094,22 +2168,50 @@ app.get('/api/stats', async (req, res) => {
       let directCash = 0, directOnline = 0, directOrange = 0;
       let resCash = 0, resOnline = 0, resOrange = 0;
 
+      let deliveryFeesTotal = 0, deliveryTotalWithoutFees = 0, deliveryTotalWithFees = 0, deliveryCount = 0, paidDeliveryCount = 0, directCount = 0;
+
       const normalizeMethod = (m) => String(m || '').trim().toUpperCase();
 
       invoices.forEach(inv => {
         if (!inv.isReservation) {
-          if (inv.isDelivery && !inv.isPaid && inv.deliveryStatus !== 'DELIVERED') {
-            return;
+          if (inv.isDelivery) {
+            // Dans le tableau de bord, ne prendre en compte que les livraisons PAYÉES OU LIVRÉES
+            if (inv.isPaid || inv.deliveryStatus === 'DELIVERED') {
+              deliveryCount++;
+              paidDeliveryCount++;
+              const fee = parseFloat(inv.deliveryFee) || 0;
+              const itemsAmt = parseFloat(inv.totalAmount) || 0;
+              const fullInvoiceTotal = itemsAmt + fee;
+
+              deliveryFeesTotal += fee;
+              deliveryTotalWithoutFees += itemsAmt;
+              deliveryTotalWithFees += fullInvoiceTotal;
+
+              count++;
+              total += fullInvoiceTotal;
+
+              const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, fullInvoiceTotal);
+              cash += breakdown.CASH;
+              directCash += breakdown.CASH;
+              online += breakdown.ONLINE;
+              directOnline += breakdown.ONLINE;
+              orangeMoney += breakdown.ORANGE_MONEY;
+              directOrange += breakdown.ORANGE_MONEY;
+            }
+          } else {
+            // Vente directe classique
+            directCount++;
+            count++;
+            total += inv.totalAmount;
+
+            const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
+            cash += breakdown.CASH;
+            directCash += breakdown.CASH;
+            online += breakdown.ONLINE;
+            directOnline += breakdown.ONLINE;
+            orangeMoney += breakdown.ORANGE_MONEY;
+            directOrange += breakdown.ORANGE_MONEY;
           }
-          count++;
-          total += inv.totalAmount;
-          const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
-          cash += breakdown.CASH;
-          directCash += breakdown.CASH;
-          online += breakdown.ONLINE;
-          directOnline += breakdown.ONLINE;
-          orangeMoney += breakdown.ORANGE_MONEY;
-          directOrange += breakdown.ORANGE_MONEY;
         }
       });
 
@@ -2128,6 +2230,12 @@ app.get('/api/stats', async (req, res) => {
       return {
         total, cash, online, orangeMoney, count, reservationTotal,
         resPaymentsCount: resPayments.length,
+        directCount,
+        deliveryCount,
+        paidDeliveryCount,
+        deliveryFeesTotal,
+        deliveryTotalWithoutFees,
+        deliveryTotalWithFees,
         directCash, directOnline, directOrange,
         resCash, resOnline, resOrange
       };
@@ -2183,22 +2291,44 @@ app.get('/api/stats', async (req, res) => {
         let total = 0, cash = 0, online = 0, orangeMoney = 0, reservationTotal = 0, count = 0;
         let directCash = 0, directOnline = 0, directOrange = 0;
         let resCash = 0, resOnline = 0, resOrange = 0;
-        const normalizeMethod = (m) => String(m || '').trim().toUpperCase();
+        let deliveryFeesTotal = 0, deliveryTotalWithoutFees = 0, deliveryTotalWithFees = 0, deliveryCount = 0, directCount = 0;
 
         allInvoices.forEach(inv => {
           if (!inv.isReservation) {
-            if (inv.isDelivery && !inv.isPaid && inv.deliveryStatus !== 'DELIVERED') {
-              return;
+            if (inv.isDelivery) {
+              // Only count paid or delivered deliveries
+              if (!inv.isPaid && inv.deliveryStatus !== 'DELIVERED') return;
+              deliveryCount++;
+              const fee = parseFloat(inv.deliveryFee) || 0;
+              const itemsAmt = parseFloat(inv.totalAmount) || 0;
+              const fullInvoiceTotal = itemsAmt + fee;
+
+              deliveryFeesTotal += fee;
+              deliveryTotalWithoutFees += itemsAmt;
+              deliveryTotalWithFees += fullInvoiceTotal;
+
+              count++;
+              total += fullInvoiceTotal;
+              const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, fullInvoiceTotal);
+              cash += breakdown.CASH;
+              directCash += breakdown.CASH;
+              online += breakdown.ONLINE;
+              directOnline += breakdown.ONLINE;
+              orangeMoney += breakdown.ORANGE_MONEY;
+              directOrange += breakdown.ORANGE_MONEY;
+            } else {
+              // Direct sale
+              directCount++;
+              count++;
+              total += inv.totalAmount;
+              const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
+              cash += breakdown.CASH;
+              directCash += breakdown.CASH;
+              online += breakdown.ONLINE;
+              directOnline += breakdown.ONLINE;
+              orangeMoney += breakdown.ORANGE_MONEY;
+              directOrange += breakdown.ORANGE_MONEY;
             }
-            count++;
-            total += inv.totalAmount;
-            const breakdown = getPaymentMethodBreakdown(inv.paymentMethod, inv.totalAmount);
-            cash += breakdown.CASH;
-            directCash += breakdown.CASH;
-            online += breakdown.ONLINE;
-            directOnline += breakdown.ONLINE;
-            orangeMoney += breakdown.ORANGE_MONEY;
-            directOrange += breakdown.ORANGE_MONEY;
           }
         });
         allResPayments.forEach(p => {
@@ -2215,6 +2345,8 @@ app.get('/api/stats', async (req, res) => {
         return {
           total, cash, online, orangeMoney, count, reservationTotal,
           resPaymentsCount: allResPayments.length,
+          directCount, deliveryCount,
+          deliveryFeesTotal, deliveryTotalWithoutFees, deliveryTotalWithFees,
           directCash, directOnline, directOrange,
           resCash, resOnline, resOrange
         };

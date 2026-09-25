@@ -42,10 +42,11 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
       const invParams = new URLSearchParams(params);
       if (status) invParams.append('status', status);
 
-      const [statsRes, invsRes, resPayRes] = await Promise.all([
+      const [statsRes, invsRes, resPayRes, resRes] = await Promise.all([
         fetch(`${API_BASE}/stats?${params.toString()}`),
         fetch(`${API_BASE}/invoices?${invParams.toString()}`),
-        fetch(`${API_BASE}/reservation-payments?${params.toString()}`)
+        fetch(`${API_BASE}/reservation-payments?${params.toString()}`),
+        fetch(`${API_BASE}/reservations?${params.toString()}`)
       ]);
 
       // Discard result if a newer fetch has already been launched
@@ -64,6 +65,11 @@ export default function AdminView({ currentUser, users, categories, fetchUsers, 
       if (resPayRes && resPayRes.ok) {
         const data = await resPayRes.json();
         if (Array.isArray(data)) setReservationPayments(data);
+      }
+
+      if (resRes && resRes.ok) {
+        const data = await resRes.json();
+        if (Array.isArray(data)) setReservations(data);
       }
     } catch (e) {
       console.error('refreshDashboardData error:', e);

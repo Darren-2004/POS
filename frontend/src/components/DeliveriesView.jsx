@@ -1,17 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Truck, Search, CheckSquare, Square, CheckCircle, Clock, MapPin, Phone, User, Printer, XCircle, PackageCheck, AlertCircle, Calendar, RotateCcw, UserCheck, DollarSign, UserMinus, ShieldCheck } from 'lucide-react';
+import { Truck, Search, CheckSquare, Square, CheckCircle, Clock, MapPin, Phone, User, Printer, XCircle, PackageCheck, AlertCircle, Calendar, RotateCcw, UserCheck, DollarSign, UserMinus, ShieldCheck, PlusCircle, Plus, Trash2, ShoppingBag } from 'lucide-react';
 import { API_BASE } from '../utils/constants';
 import { triggerPrint, showToast, getTodayDateStr, cx, formatFCFA, getPaymentMethodLabel } from '../utils/helpers';
 
-export default function DeliveriesView({ currentUser }) {
+export default function DeliveriesView({ currentUser, cashierId, hideTopTotals = false, onlyPaidOrDelivered = false, startDate, endDate, categories: initialCategories = [] }) {
   const [deliveries, setDeliveries] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState('ALL'); // ALL, PENDING, IN_DELIVERY, DELIVERED, CANCELLED
   const [selectedDriverFilter, setSelectedDriverFilter] = useState('ALL'); // ALL or driver name
-  const [filterDate, setFilterDate] = useState(getTodayDateStr());
+  const [filterDate, setFilterDate] = useState(() => {
+    if (startDate && endDate && startDate === endDate) return startDate;
+    if (startDate && endDate && startDate !== endDate) return '';
+    return getTodayDateStr();
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedDelivery, setSelectedDelivery] = useState(null);
+
+  useEffect(() => {
+    if (startDate && endDate && startDate === endDate) {
+      setFilterDate(startDate);
+    } else if (startDate && endDate && startDate !== endDate) {
+      setFilterDate('');
+    }
+  }, [startDate, endDate]);
 
   // Payment Confirmation Modal (when marking PAYEE or DELIVERED)
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -29,13 +41,179 @@ export default function DeliveriesView({ currentUser }) {
 
   const [submitting, setSubmitting] = useState(false);
 
+  // Filter: Mes Livraisons (Active by default for non-admins, disabled for Admin)
+  const [onlyMyDeliveries, setOnlyMyDeliveries] = useState(() => currentUser?.role !== 'ADMIN');
+
+  useEffect(() => {
+    if (currentUser?.role === 'ADMIN') {
+      setOnlyMyDeliveries(false);
+    }
+  }, [currentUser?.role]);
+
+  // Create Delivery Modal state
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [categoriesList, setCategoriesList] = useState(initialCategories);
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [itemPrice, setItemPrice] = useState('');
+  const [itemQty, setItemQty] = useState(1);
+  const [createCart, setCreateCart] = useState([]);
+  const [createClientName, setCreateClientName] = useState('');
+  const [createClientPhone, setCreateClientPhone] = useState('');
+  const [createDeliveryAddress, setCreateDeliveryAddress] = useState('');
+  const [createDeliveryFee, setCreateDeliveryFee] = useState('');
+  const [createPaymentMethod, setCreatePaymentMethod] = useState('CASH');
+  const [isCreatingDelivery, setIsCreatingDelivery] = useState(false);
+
+  useEffect(() => {
+    if (initialCategories && initialCategories.length > 0) {
+      setCategoriesList(initialCategories);
+    }
+  }, [initialCategories]);
+
+  const fetchCategoriesIfNeeded = async () => {
+    if (categoriesList && categoriesList.length > 0) return;
+    try {
+      const res = await fetch(`${API_BASE}/categories`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+        setCategoriesList(list);
+        if (list.length > 0) {
+          setSelectedCategoryId(list[0].id);
+          setItemPrice(list[0].price || '');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
+
+  const handleCategorySelectChange = (catId) => {
+    setSelectedCategoryId(catId);
+    const found = categoriesList.find(c => String(c.id) === String(catId));
+    if (found) {
+      setItemPrice(found.price || '');
+    }
+  };
+
+  const handleAddItemToCart = () => {
+    if (!selectedCategoryId) {
+      showToast("⚠️ Choisissez un article", "warning");
+      return;
+    }
+    const cat = categoriesList.find(c => String(c.id) === String(selectedCategoryId));
+    if (!cat) return;
+
+    const priceNum = parseFloat(itemPrice);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      showToast("⚠️ Prix invalide", "warning");
+      return;
+    }
+    const qtyNum = parseInt(itemQty, 10) || 1;
+
+    setCreateCart(prev => {
+      const existingIdx = prev.findIndex(item => String(item.categoryId) === String(selectedCategoryId));
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        copy[existingIdx].qty += qtyNum;
+        copy[existingIdx].price = priceNum;
+        return copy;
+      } else {
+        return [...prev, {
+          categoryId: cat.id,
+          categoryName: cat.name,
+          price: priceNum,
+          qty: qtyNum
+        }];
+      }
+    });
+  };
+
+  const handleRemoveItemFromCart = (index) => {
+    setCreateCart(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleCreateDeliverySubmit = async (e) => {
+    e?.preventDefault();
+    if (createCart.length === 0) {
+      showToast("⚠️ Indiquez au moins un article", "warning");
+      return;
+    }
+    if (!createClientName.trim() && !createClientPhone.trim()) {
+      showToast("⚠️ Indiquez au moins le nom ou le téléphone du client", "warning");
+      return;
+    }
+
+    const itemsTotal = createCart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+    const feeNum = parseFloat(createDeliveryFee) || 0;
+
+    setIsCreatingDelivery(true);
+    try {
+      const res = await fetch(`${API_BASE}/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalAmount: itemsTotal,
+          paymentMethod: createPaymentMethod,
+          items: createCart.map(item => ({
+            categoryId: item.categoryId,
+            categoryName: item.categoryName,
+            price: item.price,
+            qty: item.qty
+          })),
+          createdById: currentUser?.id,
+          clientName: createClientName.trim() || null,
+          clientPhone: createClientPhone.trim() || null,
+          isDelivery: true,
+          deliveryAddress: createDeliveryAddress.trim() || null,
+          deliveryFee: feeNum
+        })
+      });
+
+      const invoiceData = await res.json();
+      if (!res.ok) {
+        showToast(`❌ ${invoiceData.error || 'Erreur lors de la création'}`, 'error');
+        setIsCreatingDelivery(false);
+        return;
+      }
+
+      showToast("✅ Livraison créée avec succès !", "success");
+      triggerPrint(invoiceData);
+      window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
+
+      // Reset form
+      setCreateCart([]);
+      setCreateClientName('');
+      setCreateClientPhone('');
+      setCreateDeliveryAddress('');
+      setCreateDeliveryFee('');
+      setCreateModalOpen(false);
+      setIsCreatingDelivery(false);
+
+      // Refresh list
+      await fetchDeliveries();
+    } catch (err) {
+      console.error('Create delivery error:', err);
+      showToast("❌ Erreur réseau lors de la création", "error");
+      setIsCreatingDelivery(false);
+    }
+  };
+
   const fetchDeliveries = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filterStatus !== 'ALL') params.append('status', filterStatus);
-      if (filterDate) params.append('date', filterDate);
+      if (selectedDriverFilter !== 'ALL') params.append('driver', selectedDriverFilter);
+      if (filterDate) {
+        params.append('date', filterDate);
+      } else if (startDate && endDate) {
+        params.append('startDate', startDate);
+        params.append('endDate', endDate);
+      }
       if (searchQuery.trim()) params.append('q', searchQuery.trim());
+      const activeCashierId = onlyMyDeliveries ? (currentUser?.id || cashierId) : cashierId;
+      if (activeCashierId) params.append('cashierId', activeCashierId);
 
       const res = await fetch(`${API_BASE}/deliveries?${params.toString()}`);
       const contentType = res.headers.get('content-type') || '';
@@ -56,7 +234,7 @@ export default function DeliveriesView({ currentUser }) {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterDate, searchQuery, currentUser?.id, currentUser?.role]);
+  }, [filterStatus, selectedDriverFilter, filterDate, searchQuery, currentUser?.id, currentUser?.role, cashierId, startDate, endDate, onlyMyDeliveries]);
 
   const fetchSavedDrivers = useCallback(async () => {
     try {
@@ -81,15 +259,25 @@ export default function DeliveriesView({ currentUser }) {
     return () => clearTimeout(timer);
   }, [searchQuery, fetchDeliveries]);
 
-  // Quand un filtre livreur est actif, n'afficher que ses livraisons EN COURS
   const displayedDeliveries = deliveries.filter(d => {
+    // Mode Dashboard : afficher uniquement les livraisons PAYÉES ou LIVRÉES (ou les deux)
+    if (onlyPaidOrDelivered && !(d.isPaid || d.deliveryStatus === 'DELIVERED')) {
+      return false;
+    }
     if (selectedDriverFilter !== 'ALL') {
       const sameDriver = (d.deliveryPerson || '').trim().toLowerCase() === selectedDriverFilter.trim().toLowerCase();
-      // On ne montre que les EN COURS pour ce livreur (les livrées disparaissent)
-      return sameDriver && d.deliveryStatus === 'IN_DELIVERY';
+      if (!sameDriver) return false;
     }
     return true;
   });
+
+  // Liste de tous les livreurs disponibles pour le menu déroulant
+  const allAvailableDrivers = Array.from(new Set([
+    ...savedDrivers.map(d => (d.name || '').trim()),
+    ...deliveries.map(d => (d.deliveryPerson || '').trim())
+  ]))
+  .filter(Boolean)
+  .sort();
 
   // N'afficher dans les pills que les livreurs ayant encore des livraisons EN COURS
   const activeDrivers = Array.from(new Set(
@@ -169,6 +357,7 @@ export default function DeliveriesView({ currentUser }) {
           setSelectedIds([]);
         }
       }
+      window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
       const freshDeliveries = await fetchDeliveries();
       // Reset filtre si le livreur n'a plus rien en cours
       setSelectedDriverFilter(prev => {
@@ -250,6 +439,7 @@ export default function DeliveriesView({ currentUser }) {
         setSelectedDriverFilter(extraParams.deliveryPerson);
       }
 
+      window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
       // Fetch les données fraîches et vérifier immédiatement si le filtre livreur doit être réinitialisé
       const freshDeliveries = await fetchDeliveries();
       await fetchSavedDrivers();
@@ -304,6 +494,7 @@ export default function DeliveriesView({ currentUser }) {
         showToast(`✅ Livreur "${driverName}" assigné rétroactivement`, 'success');
         setDriverModalOpen(false);
         setSelectedDriverFilter(driverName);
+        window.dispatchEvent(new CustomEvent('pos:dashboard-refresh'));
         await fetchDeliveries();
         await fetchSavedDrivers();
       } else {
@@ -359,15 +550,18 @@ export default function DeliveriesView({ currentUser }) {
     }
   };
 
-  // Calculate totals
+  // Calculate totals based on deliveries for the current date range
   const totalCount = deliveries.length;
-  const pendingCount = deliveries.filter(d => d.deliveryStatus === 'PENDING').length;
+  const pendingCount = deliveries.filter(d => (d.deliveryStatus || 'PENDING') === 'PENDING').length;
   const inDeliveryCount = deliveries.filter(d => d.deliveryStatus === 'IN_DELIVERY').length;
   const deliveredCount = deliveries.filter(d => d.deliveryStatus === 'DELIVERED').length;
   const paidCount = deliveries.filter(d => d.isPaid || d.deliveryStatus === 'DELIVERED').length;
-  const deliveredRevenue = deliveries
-    .filter(d => d.isPaid || d.deliveryStatus === 'DELIVERED')
-    .reduce((sum, d) => sum + (d.totalAmount || 0), 0);
+
+  // Top KPI financial totals: based on ALL deliveries (paid/delivered), not filtered by driver
+  const allPaidDeliveries = deliveries.filter(d => d.isPaid || d.deliveryStatus === 'DELIVERED');
+  const totalWithoutFees = allPaidDeliveries.reduce((sum, d) => sum + (parseFloat(d.totalAmount) || 0), 0);
+  const totalDeliveryFees = allPaidDeliveries.reduce((sum, d) => sum + (parseFloat(d.deliveryFee) || 0), 0);
+  const totalWithFees = totalWithoutFees + totalDeliveryFees;
 
   // Suggestions filter for driver input
   const matchingDriverSuggestions = savedDrivers.filter(d =>
@@ -387,82 +581,168 @@ export default function DeliveriesView({ currentUser }) {
           </p>
         </div>
 
-        <button
-          onClick={fetchDeliveries}
-          className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium border border-white/10 transition"
-        >
-          🔄 Actualiser
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setCreateModalOpen(true);
+              fetchCategoriesIfNeeded();
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-lg shadow-sky-600/20 border border-sky-400/30 transition cursor-pointer"
+          >
+            <PlusCircle className="h-4 w-4" />
+            <span>Nouvelle Livraison</span>
+          </button>
+
+          <button
+            onClick={fetchDeliveries}
+            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium border border-white/10 transition cursor-pointer"
+          >
+            🔄 Actualiser
+          </button>
+        </div>
       </div>
 
-      {/* KPI Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
+      {/* KPI Stats & Financial Totals */}
+      <div className={cx(
+        "grid gap-3",
+        hideTopTotals ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3 md:grid-cols-6"
+      )}>
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3 flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 shrink-0">
             <Clock className="h-4 w-4" />
           </div>
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">En attente</div>
-            <div className="text-lg font-bold tabular-nums text-amber-400">{pendingCount}</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-foreground/50">En attente</div>
+            <div className="text-base font-bold tabular-nums text-amber-400">{pendingCount}</div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3 flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
             <Truck className="h-4 w-4" />
           </div>
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">En cours</div>
-            <div className="text-lg font-bold tabular-nums text-blue-400">{inDeliveryCount}</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-foreground/50">En cours</div>
+            <div className="text-base font-bold tabular-nums text-blue-400">{inDeliveryCount}</div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3 flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 shrink-0">
             <PackageCheck className="h-4 w-4" />
           </div>
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/50">Livrées ({paidCount} Payées)</div>
-            <div className="text-lg font-bold tabular-nums text-emerald-400">{deliveredCount}</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-foreground/50">Livrées ({paidCount} Payées)</div>
+            <div className="text-base font-bold tabular-nums text-emerald-400">{deliveredCount}</div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gold/10 text-gold">
-            <CheckCircle className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-gold/90">CA COMPTABILISÉ</div>
-            <div className="text-sm sm:text-base font-bold tabular-nums text-gold">{formatFCFA(deliveredRevenue)}</div>
-          </div>
-        </div>
+        {!hideTopTotals && (
+          <>
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                <PackageCheck className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-300">TOTAL SANS FRAIS</div>
+                <div className="text-xs sm:text-sm font-bold tabular-nums text-emerald-400">{formatFCFA(totalWithoutFees)}</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-3 flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400 shrink-0">
+                <Truck className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-sky-300">TOTAL FRAIS LIVRAISON</div>
+                <div className="text-xs sm:text-sm font-bold tabular-nums text-sky-400">{formatFCFA(totalDeliveryFees)}</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gold/40 bg-gold/15 p-3 flex items-center gap-2.5 shadow-lg shadow-gold/5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gold/20 text-gold shrink-0">
+                <CheckCircle className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-gold">TOTAL AVEC FRAIS</div>
+                <div className="text-xs sm:text-sm font-black tabular-nums text-gold">{formatFCFA(totalWithFees)}</div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Filters Bar & Bulk Action Toolbar */}
       <div className="flex flex-col gap-2.5">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          {/* Status Filter Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto p-1 rounded-xl bg-zinc-900 border border-white/10 text-xs">
-            {[
-              { id: 'ALL', label: 'Toutes' },
-              { id: 'PENDING', label: 'En attente' },
-              { id: 'IN_DELIVERY', label: 'En cours' },
-              { id: 'DELIVERED', label: 'Livrées' },
-              { id: 'CANCELLED', label: 'Annulées' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setFilterStatus(tab.id)}
-                className={cx(
-                  'px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap',
-                  filterStatus === tab.id
-                    ? 'bg-gold text-black font-bold shadow'
-                    : 'text-foreground/70 hover:text-foreground hover:bg-white/5'
-                )}
+          {/* Status Filter Tabs + Mes Livraisons Toggle */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 overflow-x-auto p-1 rounded-xl bg-zinc-900 border border-white/10 text-xs">
+              {[
+                { id: 'ALL', label: 'Toutes' },
+                { id: 'PENDING', label: 'En attente' },
+                { id: 'IN_DELIVERY', label: 'En cours' },
+                { id: 'DELIVERED', label: 'Livrées' },
+                { id: 'CANCELLED', label: 'Annulées' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setFilterStatus(tab.id)}
+                  className={cx(
+                    'px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap',
+                    filterStatus === tab.id
+                      ? 'bg-gold text-black font-bold shadow'
+                      : 'text-foreground/70 hover:text-foreground hover:bg-white/5'
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Mes Livraisons Toggle */}
+            <button
+              type="button"
+              onClick={() => setOnlyMyDeliveries(v => !v)}
+              title={onlyMyDeliveries ? 'Afficher toutes les livraisons' : 'Afficher uniquement mes livraisons'}
+              className={cx(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition whitespace-nowrap cursor-pointer',
+                onlyMyDeliveries
+                  ? 'bg-gold/20 border-gold/50 text-gold shadow-sm'
+                  : 'bg-zinc-900 border-white/10 text-foreground/60 hover:text-foreground hover:border-white/20'
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              {onlyMyDeliveries ? 'Mes livraisons' : 'Toutes'}
+            </button>
+
+            {/* Selecteur / Filtre par Livreur */}
+            <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-xl border border-white/10 text-xs">
+              <Truck className="h-3.5 w-3.5 text-gold shrink-0" />
+              <select
+                value={selectedDriverFilter}
+                onChange={e => setSelectedDriverFilter(e.target.value)}
+                className="bg-transparent text-foreground text-xs font-semibold outline-none border-none cursor-pointer [color-scheme:dark]"
               >
-                {tab.label}
-              </button>
-            ))}
+                <option value="ALL" className="bg-zinc-900 text-white font-normal">Tous les livreurs</option>
+                {allAvailableDrivers.map(driverName => (
+                  <option key={driverName} value={driverName} className="bg-zinc-900 text-white font-normal">
+                    {driverName}
+                  </option>
+                ))}
+              </select>
+              {selectedDriverFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDriverFilter('ALL')}
+                  className="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-white/10 hover:bg-white/20 text-foreground/70 hover:text-foreground transition ml-1 cursor-pointer"
+                  title="Réinitialiser le filtre livreur"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Date Filter & Search */}
@@ -633,8 +913,11 @@ export default function DeliveriesView({ currentUser }) {
               </th>
               <th className="px-3 py-3">N° Livraison</th>
               <th className="px-3 py-3">Client & Livreur</th>
+              <th className="px-3 py-3">Agent / Caissier</th>
               <th className="px-3 py-3 hidden sm:table-cell">Adresse</th>
-              <th className="px-3 py-3 text-right">Montant</th>
+              <th className="px-3 py-3 text-right text-emerald-400">Montant Commande</th>
+              <th className="px-3 py-3 text-right text-sky-400">Frais Livraison</th>
+              <th className="px-3 py-3 text-right text-gold font-black">Total (AVEC Frais)</th>
               <th className="px-3 py-3 text-center">Comptabilité & Statut</th>
               <th className="px-3 py-3 text-center">Actions</th>
             </tr>
@@ -642,7 +925,7 @@ export default function DeliveriesView({ currentUser }) {
           <tbody className="divide-y divide-white/[0.04]">
             {loading && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-foreground/40">
+                <td colSpan={10} className="px-4 py-8 text-center text-foreground/40">
                   <div className="flex items-center justify-center gap-2">
                     <span className="w-4 h-4 border-2 border-gold border-t-transparent rounded-full animate-spin"></span>
                     Chargement des livraisons...
@@ -653,7 +936,7 @@ export default function DeliveriesView({ currentUser }) {
 
             {!loading && displayedDeliveries.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-foreground/40">
+                <td colSpan={10} className="px-4 py-10 text-center text-foreground/40">
                   Aucune livraison trouvée.
                 </td>
               </tr>
@@ -665,6 +948,10 @@ export default function DeliveriesView({ currentUser }) {
               const clientPhone = del.clientPhone || '—';
               const driverName = del.deliveryPerson || null;
               const isPaid = del.isPaid || del.deliveryStatus === 'DELIVERED';
+
+              const itemsAmount = parseFloat(del.totalAmount) || 0;
+              const deliveryFee = parseFloat(del.deliveryFee) || 0;
+              const totalWithFee = itemsAmount + deliveryFee;
 
               return (
                 <tr
@@ -703,6 +990,13 @@ export default function DeliveriesView({ currentUser }) {
                     )}
                   </td>
 
+                  <td className="px-3 py-3">
+                    <div className="font-semibold text-foreground/80 flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-gold shrink-0" />
+                      <span>{del.createdBy?.name || '—'}</span>
+                    </div>
+                  </td>
+
                   <td className="px-3 py-3 hidden sm:table-cell text-foreground/70 max-w-xs truncate">
                     {del.deliveryAddress ? (
                       <span className="flex items-center gap-1"><MapPin className="h-3 w-3 text-gold shrink-0" /> {del.deliveryAddress}</span>
@@ -711,8 +1005,19 @@ export default function DeliveriesView({ currentUser }) {
                     )}
                   </td>
 
-                  <td className="px-3 py-3 text-right font-mono font-bold text-foreground">
-                    {formatFCFA(del.totalAmount)}
+                  {/* 1. Montant Commande (Marchandises uniquement) */}
+                  <td className="px-3 py-3 text-right font-mono font-bold text-emerald-400">
+                    {formatFCFA(itemsAmount)}
+                  </td>
+
+                  {/* 2. Frais Livraison */}
+                  <td className="px-3 py-3 text-right font-mono font-bold text-sky-400">
+                    {formatFCFA(deliveryFee)}
+                  </td>
+
+                  {/* 3. Total (AVEC Frais) */}
+                  <td className="px-3 py-3 text-right font-mono font-black text-gold text-sm">
+                    {formatFCFA(totalWithFee)}
                   </td>
 
                   <td className="px-3 py-3 text-center space-y-1">
@@ -796,6 +1101,40 @@ export default function DeliveriesView({ currentUser }) {
               );
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 bg-zinc-900 border-t-2 border-gold/40 text-xs font-bold z-10 shadow-2xl">
+            {loading ? (
+              <tr className="bg-zinc-900/95 backdrop-blur">
+                <td colSpan={10} className="px-3 py-3 text-center text-foreground/30 italic text-xs animate-pulse">
+                  Calcul des totaux...
+                </td>
+              </tr>
+            ) : (() => {
+              const paidDisplayedDeliveries = displayedDeliveries.filter(d => d.isPaid || d.deliveryStatus === 'DELIVERED');
+              const paidTotalWithoutFees = paidDisplayedDeliveries.reduce((sum, d) => sum + (parseFloat(d.totalAmount) || 0), 0);
+              const paidTotalDeliveryFees = paidDisplayedDeliveries.reduce((sum, d) => sum + (parseFloat(d.deliveryFee) || 0), 0);
+              const paidTotalWithFees = paidTotalWithoutFees + paidTotalDeliveryFees;
+
+              return (
+                <tr className="bg-zinc-900/95 backdrop-blur">
+                  <td colSpan={5} className="px-3 py-3 text-gold uppercase tracking-wider font-extrabold">
+                    TOTAL ENCAISSÉ ({paidDisplayedDeliveries.length}/{displayedDeliveries.length} livraison{displayedDeliveries.length > 1 ? 's' : ''})
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-emerald-400 text-sm font-extrabold">
+                    {formatFCFA(paidTotalWithoutFees)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-sky-400 text-sm font-extrabold">
+                    {formatFCFA(paidTotalDeliveryFees)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-gold text-base font-black">
+                    {formatFCFA(paidTotalWithFees)}
+                  </td>
+                  <td colSpan={2} className="px-3 py-3 text-center text-foreground/40 text-[10px]">
+                    Uniquement livraisons encaissées
+                  </td>
+                </tr>
+              );
+            })()}
+          </tfoot>
         </table>
       </div>
 
@@ -1117,6 +1456,220 @@ export default function DeliveriesView({ currentUser }) {
                     <CheckCircle className="h-4 w-4" /> Marquer Livrée
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal / Formulaire : Créer une Livraison */}
+      {createModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-zinc-900 border border-sky-500/40 rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="text-base font-bold text-sky-400 flex items-center gap-2">
+                <Truck className="h-5 w-5 text-sky-400" />
+                Créer une nouvelle livraison
+              </h3>
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(false)}
+                className="text-foreground/50 hover:text-foreground text-lg"
+              >✕</button>
+            </div>
+
+            {/* Form Section 1: Selection Articles */}
+            <div className="space-y-3 bg-zinc-950 p-3.5 rounded-xl border border-white/[0.08]">
+              <div className="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                <ShoppingBag className="h-4 w-4" /> Sélection des articles
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="sm:col-span-2">
+                  <label className="text-[11px] text-foreground/60 font-medium">Article / Catégorie</label>
+                  <select
+                    value={selectedCategoryId}
+                    onChange={e => handleCategorySelectChange(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-white/15 bg-zinc-900 py-1.5 px-2.5 text-xs text-foreground outline-none focus:border-sky-400"
+                  >
+                    <option value="">-- Choisir un article --</option>
+                    {categoriesList.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name} ({formatFCFA(cat.price)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-foreground/60 font-medium">Quantité</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={itemQty}
+                    onChange={e => setItemQty(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-white/15 bg-zinc-900 py-1.5 px-2.5 text-xs font-mono font-bold text-foreground outline-none focus:border-sky-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] text-foreground/60 font-medium">Prix unitaire :</label>
+                  <input
+                    type="number"
+                    value={itemPrice}
+                    onChange={e => setItemPrice(e.target.value)}
+                    className="w-28 rounded-lg border border-white/15 bg-zinc-900 py-1 px-2 text-xs font-mono font-bold text-gold outline-none"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleAddItemToCart}
+                  className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1 shadow transition cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Ajouter l'article
+                </button>
+              </div>
+
+              {/* Cart Items Table */}
+              {createCart.length > 0 && (
+                <div className="mt-2 rounded-xl border border-white/10 bg-zinc-900 overflow-hidden divide-y divide-white/[0.06]">
+                  {createCart.map((item, idx) => (
+                    <div key={idx} className="p-2.5 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-semibold text-foreground">{item.categoryName}</div>
+                        <div className="text-[10px] text-foreground/50">{formatFCFA(item.price)} x {item.qty}</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono font-bold text-emerald-400">{formatFCFA(item.price * item.qty)}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItemFromCart(idx)}
+                          className="text-rose-400 hover:text-rose-300 p-1"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="p-2.5 bg-zinc-950 flex items-center justify-between font-bold text-xs">
+                    <span className="text-foreground/70">Sous-total articles :</span>
+                    <span className="font-mono text-emerald-400 font-extrabold text-sm">
+                      {formatFCFA(createCart.reduce((sum, i) => sum + (i.price * i.qty), 0))}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Form Section 2: Info Client & Livraison */}
+            <div className="space-y-2.5 bg-zinc-950 p-3.5 rounded-xl border border-white/[0.08]">
+              <div className="text-xs font-bold uppercase tracking-wider text-gold flex items-center gap-1.5">
+                <User className="h-4 w-4" /> Information client & destination
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-foreground/60 font-medium">Nom du client *</label>
+                  <input
+                    type="text"
+                    placeholder="Nom complet..."
+                    value={createClientName}
+                    onChange={e => setCreateClientName(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-white/15 bg-zinc-900 py-1.5 px-2.5 text-xs text-foreground outline-none focus:border-gold/60"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-foreground/60 font-medium">Téléphone client *</label>
+                  <input
+                    type="tel"
+                    placeholder="Numéro de tél..."
+                    value={createClientPhone}
+                    onChange={e => setCreateClientPhone(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-white/15 bg-zinc-900 py-1.5 px-2.5 text-xs font-mono text-foreground outline-none focus:border-gold/60"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                <div className="sm:col-span-2">
+                  <label className="text-[11px] text-foreground/60 font-medium">Adresse de livraison</label>
+                  <input
+                    type="text"
+                    placeholder="Quartier, point de repère..."
+                    value={createDeliveryAddress}
+                    onChange={e => setCreateDeliveryAddress(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-white/15 bg-zinc-900 py-1.5 px-2.5 text-xs text-foreground outline-none focus:border-gold/60"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-sky-400 font-bold">Frais de livraison (FCFA)</label>
+                  <input
+                    type="number"
+                    placeholder="Ex: 1000"
+                    value={createDeliveryFee}
+                    onChange={e => setCreateDeliveryFee(e.target.value)}
+                    className="w-full mt-1 rounded-xl border border-sky-500/30 bg-sky-500/10 py-1.5 px-2.5 text-xs font-mono font-bold text-sky-300 outline-none focus:border-sky-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Form Section 3: Mode de paiement */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-foreground/80">Mode de règlement :</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'CASH', label: 'Espèces' },
+                  { id: 'ONLINE', label: 'Mobile Money' },
+                  { id: 'ORANGE_MONEY', label: 'Orange Money' }
+                ].map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setCreatePaymentMethod(m.id)}
+                    className={cx(
+                      'py-2 px-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer',
+                      createPaymentMethod === m.id
+                        ? 'bg-gold text-black border-gold shadow'
+                        : 'bg-white/5 text-foreground/70 border-white/10 hover:bg-white/10'
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Summary & Submit */}
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[10px] text-foreground/50 uppercase font-bold">Total Général à Payer</div>
+                <div className="text-lg font-black text-gold font-mono">
+                  {formatFCFA(
+                    createCart.reduce((sum, i) => sum + (i.price * i.qty), 0) + (parseFloat(createDeliveryFee) || 0)
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isCreatingDelivery}
+                  onClick={() => setCreateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium text-foreground/70 cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={isCreatingDelivery || createCart.length === 0}
+                  onClick={handleCreateDeliverySubmit}
+                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-sky-600/30 flex items-center gap-2 cursor-pointer"
+                >
+                  {isCreatingDelivery ? 'Création...' : '🚀 Valider & Créer la livraison'}
+                </button>
               </div>
             </div>
           </div>

@@ -3,7 +3,7 @@ import StatusChip from '../../components/StatusChip';
 import IconButton from '../../components/IconButton';
 import ConfirmModal from '../../components/ConfirmModal';
 import { formatFCFA, triggerPrint, getTodayDateStr, cx, isReservationInvoice, isDeliveryInvoice } from '../../utils/helpers';
-import { Printer, Trash2, Receipt, RotateCcw, Calendar, X } from 'lucide-react';
+import { Printer, Trash2, Receipt, RotateCcw, Calendar, X, Truck, Clock } from 'lucide-react';
 import { API_BASE } from '../../utils/constants';
 
 const SHOP_NAME = 'JOEL SHOP';
@@ -13,6 +13,7 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   const [adminPinInput, setAdminPinInput] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [previewInvoice, setPreviewInvoice] = useState(null);
+  const [includeDeliveryFees, setIncludeDeliveryFees] = useState(true);
 
   const todayStr = getTodayDateStr();
 
@@ -39,7 +40,8 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   const invCashSales   = directValidatedInvoices.filter(inv => { const m = normalizeMethod(inv.paymentMethod); return m === 'CASH' || m === 'UNSPECIFIED' || !m; });
   const invOnlineSales = directValidatedInvoices.filter(inv => normalizeMethod(inv.paymentMethod) === 'ONLINE');
   const invOrangeSales = directValidatedInvoices.filter(inv => normalizeMethod(inv.paymentMethod) === 'ORANGE_MONEY');
-  // ── TOP CARDS: authoritative numbers come from stats.filtered (server-computed) ──
+
+  // ── TOP CARDS & STATS: authoritative numbers come from stats.filtered (server-computed) ──
   const computeFallbackStats = () => {
     let total = 0, cash = 0, online = 0, orangeMoney = 0, count = 0, reservationTotal = 0, resPaymentsCount = 0;
     let directCash = 0, directOnline = 0, directOrange = 0;
@@ -87,14 +89,57 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
     ? stats.filtered
     : computeFallbackStats();
 
-  const filteredTotal       = asNumber(sf.total);
+  // ── SYNTHESIS CALCULATIONS FOR ADMIN DASHBOARD ──
+  // 1. Direct Sales
+  const directInvoices = safeInvoices.filter(inv => {
+    if (!inv) return false;
+    return normalizeStatus(inv.status) === 'VALIDATED' && !isReservationInvoice(inv) && !isDeliveryInvoice(inv);
+  });
+  const directTotalValue = directInvoices.reduce((sum, inv) => sum + asNumber(inv.totalAmount), 0);
+  const directInvoiceCount = directInvoices.length;
+  const directAvgBasket = directInvoiceCount > 0 ? directTotalValue / directInvoiceCount : 0;
+
+  // 2. Deliveries
+  const deliveryInvoices = safeInvoices.filter(inv => {
+    if (!inv) return false;
+    return normalizeStatus(inv.status) === 'VALIDATED' && isDeliveryInvoice(inv) && (inv.isPaid || inv.deliveryStatus === 'DELIVERED');
+  });
+  const localDeliveryWithout = deliveryInvoices.reduce((sum, inv) => sum + asNumber(inv.totalAmount), 0);
+  const localDeliveryFees = deliveryInvoices.reduce((sum, inv) => sum + asNumber(inv.deliveryFee), 0);
+  const localDeliveryWith = localDeliveryWithout + localDeliveryFees;
+
+  const deliveryCount = typeof sf?.deliveryCount === 'number' ? sf.deliveryCount : (typeof sf?.paidDeliveryCount === 'number' ? sf.paidDeliveryCount : deliveryInvoices.length);
+  const deliveryTotalWithoutFees = typeof sf?.deliveryTotalWithoutFees === 'number' ? sf.deliveryTotalWithoutFees : localDeliveryWithout;
+  const deliveryFeesTotal = typeof sf?.deliveryFeesTotal === 'number' ? sf.deliveryFeesTotal : localDeliveryFees;
+  const deliveryTotalWithFees = typeof sf?.deliveryTotalWithFees === 'number' ? sf.deliveryTotalWithFees : localDeliveryWith;
+
+  // 3. Reservations
+  const activeReservations = safeReservations.filter(r => r.status !== 'CANCELLED');
+  const resTotalValue = activeReservations.reduce((sum, r) => sum + asNumber(r.totalAmount), 0);
+  const resTotalPaidFromRes = activeReservations.reduce((sum, r) => {
+    if (r.totalPaid !== undefined) return sum + asNumber(r.totalPaid);
+    const sumPayments = r.payments?.reduce((s, p) => s + asNumber(p.amount), 0) || 0;
+    return sum + sumPayments;
+  }, 0);
+  const resTotalRemaining = activeReservations.reduce((sum, r) => {
+    const paid = r.totalPaid !== undefined ? asNumber(r.totalPaid) : (r.payments?.reduce((s, p) => s + asNumber(p.amount), 0) || 0);
+    const total = asNumber(r.totalAmount);
+    return sum + Math.max(0, total - paid);
+  }, 0);
+
+  const filteredTotalRaw    = asNumber(sf.total); // always WITH delivery fees
+  const sfDeliveryFeesTotal = asNumber(sf.deliveryFeesTotal);
+  // Displayed total depends on toggle
+  const filteredTotal       = includeDeliveryFees ? filteredTotalRaw : (filteredTotalRaw - sfDeliveryFeesTotal);
   const filteredCashTotal   = asNumber(sf.cash);
   const filteredOnlineTotal = asNumber(sf.online);
   const filteredOrangeTotal = asNumber(sf.orangeMoney);
 
-  // Direct sales = total minus reservation advances
+  // Direct sales = total (raw, with fees) minus reservation advances minus deliveries with fees
   const reserveTotal  = asNumber(sf.reservationTotal);
-  const salesTotal    = filteredTotal - reserveTotal;
+  const sfDeliveryWithFees = asNumber(sf.deliveryTotalWithFees);
+  const sfDeliveryWithoutFees = asNumber(sf.deliveryTotalWithoutFees);
+  const salesTotal    = filteredTotalRaw - reserveTotal - sfDeliveryWithFees;
   const reserveCount  = asNumber(sf.resPaymentsCount);
   const salesCount    = asNumber(sf.count);
 
@@ -106,6 +151,8 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
   const resOnline = asNumber(sf.resOnline);
   const resOrange = asNumber(sf.resOrange);
 
+  const finalResPaid = safeReservations.length > 0 ? resTotalPaidFromRes : reserveTotal;
+
   const formatMethodSummary = (saleTotalValue, advanceTotalValue) => {
     const parts = [`Ventes: ${formatFCFA(saleTotalValue)}`];
     if (advanceTotalValue > 0) {
@@ -113,7 +160,15 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
     }
     return parts.join(' | ');
   };
-  const topSummary = `${salesCount} vente${salesCount === 1 ? '' : 's'} directe${salesCount === 1 ? '' : 's'} (${formatFCFA(salesTotal)}) ${reserveCount > 0 ? `+ ${reserveCount} acompte${reserveCount === 1 ? '' : 's'} (${formatFCFA(reserveTotal)})` : ''}`;
+
+  const deliveryLabel = includeDeliveryFees
+    ? `Livr. (avec frais): ${formatFCFA(sfDeliveryWithFees)}`
+    : `Livr. (sans frais): ${formatFCFA(sfDeliveryWithoutFees)}`;
+  const topSummary = [
+    `${salesCount} vente${salesCount === 1 ? '' : 's'} directe${salesCount === 1 ? '' : 's'} (${formatFCFA(salesTotal)})`,
+    reserveCount > 0 ? `${reserveCount} acompte${reserveCount === 1 ? '' : 's'} (${formatFCFA(reserveTotal)})` : null,
+    sfDeliveryWithFees > 0 ? deliveryLabel : null
+  ].filter(Boolean).join(' + ');
 
   const isFiltered = Boolean(filterDate || filterCashier);
 
@@ -192,14 +247,29 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
       {/* Top Cards Section */}
       <section className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-4 transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
         <div className="rounded-2xl bg-white/[0.02] p-4 border border-gold/20 text-sm text-foreground/80 shadow-lg shadow-gold/5">
-          <div className="text-[10px] uppercase tracking-[0.24em] text-gold font-semibold flex items-center gap-1.5">
-            {loading
-              ? <span className="w-2 h-2 rounded-full bg-gold animate-ping inline-block" />
-              : <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />}
-            {filterDate ? `Total Encaissements (${formatFilterDate(filterDate)})` : 'Total Encaissements (Toutes les dates)'}
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-gold font-semibold flex items-center gap-1.5">
+              {loading
+                ? <span className="w-2 h-2 rounded-full bg-gold animate-ping inline-block" />
+                : <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />}
+              {filterDate ? `Total Encaissé (${formatFilterDate(filterDate)})` : 'Total Encaissé (Toutes les dates)'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setIncludeDeliveryFees(v => !v)}
+              className={cx(
+                'px-2 py-0.5 rounded-lg text-[9px] font-extrabold transition cursor-pointer border shrink-0',
+                includeDeliveryFees
+                  ? 'bg-gold/20 text-gold border-gold/40 hover:bg-gold/30'
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+              )}
+              title={includeDeliveryFees ? 'Cliquer pour afficher SANS les frais de livraison' : 'Cliquer pour afficher AVEC les frais de livraison'}
+            >
+              {includeDeliveryFees ? 'AVEC Frais Livr.' : 'SANS Frais Livr.'}
+            </button>
           </div>
           <div className="mt-3 text-2xl font-bold text-gold">{formatFCFA(filteredTotal)}</div>
-          <div className="mt-1 text-xs text-foreground/50">{topSummary}</div>
+          <div className="mt-1 text-xs text-foreground/50 leading-relaxed">{topSummary}</div>
         </div>
 
         <div className="rounded-2xl bg-white/[0.015] p-4 border border-white/5 text-sm text-foreground/80">
@@ -218,6 +288,90 @@ export default function Dashboard({ stats = {}, invoices = [], reservationPaymen
           <div className="text-[10px] uppercase tracking-[0.24em] text-orange-400/90 font-semibold">Orange Money</div>
           <div className="mt-3 text-2xl font-semibold text-orange-400">{formatFCFA(filteredOrangeTotal)}</div>
           <div className="mt-1 text-xs text-foreground/40">{formatMethodSummary(directOrange, resOrange)}</div>
+        </div>
+      </section>
+
+      {/* Syntheses Section (Ventes Directes, Livraisons, Réservations) */}
+      <section className={`space-y-4 transition-opacity duration-300 ${loading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+        {/* Synthèse des Ventes Directes */}
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+            <Receipt className="h-4 w-4 text-emerald-400" />
+            <span>Synthèse des Ventes Directes ({directInvoiceCount} vente{directInvoiceCount > 1 ? 's' : ''} encaissée{directInvoiceCount > 1 ? 's' : ''})</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-sky-300">Nombre de Factures</div>
+              <div className="text-base font-black text-sky-400 mt-1">{directInvoiceCount}</div>
+              <div className="text-[9px] text-sky-300/60 mt-0.5">Total des ventes comptant validées</div>
+            </div>
+
+            <div className="rounded-xl border border-gold/40 bg-gold/15 p-3">
+              <div className="text-[10px] font-bold uppercase text-gold">Panier Moyen</div>
+              <div className="text-base font-black text-gold mt-1">{formatFCFA(directAvgBasket)}</div>
+              <div className="text-[9px] text-gold/60 mt-0.5">Montant moyen par vente directe</div>
+            </div>
+
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 p-3">
+              <div className="text-[10px] font-bold uppercase text-emerald-300">Total Encaissé Ventes</div>
+              <div className="text-base font-black text-emerald-400 mt-1">{formatFCFA(directTotalValue)}</div>
+              <div className="text-[9px] text-emerald-300/60 mt-0.5">Chiffre d'affaires des ventes directes</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Synthèse des Livraisons */}
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-950/20 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-sky-400 uppercase tracking-wider">
+            <Truck className="h-4 w-4" />
+            <span>Synthèse des Livraisons ({deliveryCount} livraison{deliveryCount > 1 ? 's' : ''} encaissée{deliveryCount > 1 ? 's' : ''})</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-emerald-300">Total SANS Frais</div>
+              <div className="text-base font-black text-emerald-400 mt-1">{formatFCFA(deliveryTotalWithoutFees)}</div>
+              <div className="text-[9px] text-emerald-300/60 mt-0.5">Montant des marchandises uniquement</div>
+            </div>
+
+            <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-sky-300">Total Frais de Livraison</div>
+              <div className="text-base font-black text-sky-400 mt-1">{formatFCFA(deliveryFeesTotal)}</div>
+              <div className="text-[9px] text-sky-300/60 mt-0.5">Frais de transport encaissés</div>
+            </div>
+
+            <div className="rounded-xl border border-gold/40 bg-gold/15 p-3">
+              <div className="text-[10px] font-bold uppercase text-gold">Total AVEC Frais (Global)</div>
+              <div className="text-base font-black text-gold mt-1">{formatFCFA(deliveryTotalWithFees)}</div>
+              <div className="text-[9px] text-gold/60 mt-0.5">Marchandises + Frais de livraison</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Synthèse des Réservations */}
+        <div className="rounded-2xl border border-purple-500/20 bg-purple-950/20 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase tracking-wider">
+            <Clock className="h-4 w-4 text-purple-400" />
+            <span>Synthèse des Réservations ({activeReservations.length} réservation{activeReservations.length > 1 ? 's' : ''})</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-purple-300">Valeur Totale Réservée</div>
+              <div className="text-base font-black text-purple-300 mt-1">{formatFCFA(resTotalValue)}</div>
+              <div className="text-[9px] text-purple-300/60 mt-0.5">Montant total des marchandises réservées</div>
+            </div>
+
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-amber-300">Solde Restant Dû</div>
+              <div className="text-base font-black text-amber-400 mt-1">{formatFCFA(resTotalRemaining)}</div>
+              <div className="text-[9px] text-amber-300/60 mt-0.5">Reste à percevoir pour solder</div>
+            </div>
+
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+              <div className="text-[10px] font-bold uppercase text-emerald-300">Acomptes & Règlements Perçus</div>
+              <div className="text-base font-black text-emerald-400 mt-1">{formatFCFA(finalResPaid)}</div>
+              <div className="text-[9px] text-emerald-300/60 mt-0.5">Montant déjà encaissé en caisse</div>
+            </div>
+          </div>
         </div>
       </section>
 

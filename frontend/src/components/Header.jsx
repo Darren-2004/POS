@@ -24,6 +24,31 @@ export default function Header({
   const isAdmin  = currentUser.role === 'ADMIN';
   const isCashier = currentView === 'cashier';
 
+  const userPermissions = isAdmin ? 'ALL' : (currentUser.permissions || 'ALL');
+
+  const visibleTabs = CASHIER_TABS.map(tab => {
+    if (tab.key === 'sale' && userPermissions === 'CUSTOMER_SERVICE') {
+      return { ...tab, label: 'Nouvelle Commande' };
+    }
+    return tab;
+  }).filter(({ key }) => {
+    // DIRECT_SALE : pas d'accès à l'onglet de gestion des livraisons
+    if (userPermissions === 'DIRECT_SALE' && key === 'deliveries') {
+      return false;
+    }
+    // CUSTOMER_SERVICE : pas d'accès à l'onglet 'my_invoices' (Mes Ventes)
+    if (userPermissions === 'CUSTOMER_SERVICE' && key === 'my_invoices') {
+      return false;
+    }
+    return true;
+  });
+
+  React.useEffect(() => {
+    if (isCashier && visibleTabs.length > 0 && !visibleTabs.some(t => t.key === cashierTab)) {
+      setCashierTab(visibleTabs[0].key);
+    }
+  }, [isCashier, cashierTab, visibleTabs, setCashierTab]);
+
   return (
     <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-white/10 bg-background px-4 sm:px-6 h-[52px] shrink-0">
       {/* Brand */}
@@ -42,7 +67,7 @@ export default function Header({
       {/* Cashier tabs — take all available space */}
       {isCashier && (
         <nav className="flex flex-1 items-center gap-1 min-w-0 overflow-x-auto scrollbar-none">
-          {CASHIER_TABS.map(({ key, label, icon: Icon }) => (
+          {visibleTabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setCashierTab(key)}

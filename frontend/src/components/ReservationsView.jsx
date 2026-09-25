@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight, Calendar, RotateCcw, Receipt, CreditCard } from 'lucide-react';
+import { Search, User, Phone, Printer, CheckCircle, X, Eye, Clock, ArrowRight, Calendar, RotateCcw, Receipt, CreditCard, UserCheck } from 'lucide-react';
 import Field, { inputCls } from './Field';
 import ClientAutocomplete from './ClientAutocomplete';
 import { formatFCFA, triggerPrint, triggerProformaPrint, triggerFinalReservationPrint, getPaymentMethodLabel, getTodayDateStr, cx } from '../utils/helpers';
@@ -12,7 +12,8 @@ export default function ReservationsView({ categories = [], currentUser, serverO
   const [loadingList, setLoadingList] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [filterDate, setFilterDate] = useState(getTodayDateStr());
+  const [filterDate, setFilterDate] = useState('');
+  const [onlyMyReservations, setOnlyMyReservations] = useState(true);
 
   // Side Drawer state for selected reservation
   const [selectedRes, setSelectedRes] = useState(null); // null = Drawer closed
@@ -75,13 +76,13 @@ export default function ReservationsView({ categories = [], currentUser, serverO
 
   useEffect(() => {
     fetchReservations();
-  }, [searchQuery, statusFilter, filterDate]);
+  }, [searchQuery, statusFilter, filterDate, onlyMyReservations]);
 
   useEffect(() => {
     const handleRefresh = () => fetchReservations();
     window.addEventListener('pos:dashboard-refresh', handleRefresh);
     return () => window.removeEventListener('pos:dashboard-refresh', handleRefresh);
-  }, [searchQuery, statusFilter, filterDate]);
+  }, [searchQuery, statusFilter, filterDate, onlyMyReservations]);
 
   const fetchReservations = async () => {
     setLoadingList(true);
@@ -90,6 +91,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
       if (searchQuery) params.append('q', searchQuery);
       if (statusFilter) params.append('status', statusFilter);
       if (filterDate) params.append('date', filterDate);
+      if (onlyMyReservations && currentUser?.id) params.append('cashierId', currentUser.id);
       const res = await fetch(`${API_BASE}/reservations?${params.toString()}`);
       if (res.ok) {
         setReservations(await res.json());
@@ -316,25 +318,42 @@ export default function ReservationsView({ categories = [], currentUser, serverO
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Status Pills */}
-          <div className="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-white/10 text-xs">
+          {/* Status Pills & Mes Réservations Toggle */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-white/10 text-xs">
+              <button
+                onClick={() => setStatusFilter('')}
+                className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', !statusFilter ? 'bg-gold text-black' : 'text-foreground/60 hover:text-white')}
+              >
+                Toutes
+              </button>
+              <button
+                onClick={() => setStatusFilter('PENDING')}
+                className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'PENDING' ? 'bg-amber-500 text-black' : 'text-foreground/60 hover:text-white')}
+              >
+                En cours
+              </button>
+              <button
+                onClick={() => setStatusFilter('COMPLETED')}
+                className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'COMPLETED' ? 'bg-emerald-500 text-black' : 'text-foreground/60 hover:text-white')}
+              >
+                Solde 100%
+              </button>
+            </div>
+
             <button
-              onClick={() => setStatusFilter('')}
-              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', !statusFilter ? 'bg-gold text-black' : 'text-foreground/60 hover:text-white')}
+              type="button"
+              onClick={() => setOnlyMyReservations(v => !v)}
+              title={onlyMyReservations ? 'Afficher toutes les réservations' : 'Afficher uniquement mes réservations'}
+              className={cx(
+                'flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border transition whitespace-nowrap cursor-pointer',
+                onlyMyReservations
+                  ? 'bg-gold/20 border-gold/50 text-gold shadow-sm'
+                  : 'bg-zinc-900 border-white/10 text-foreground/60 hover:text-foreground hover:border-white/20'
+              )}
             >
-              Toutes
-            </button>
-            <button
-              onClick={() => setStatusFilter('PENDING')}
-              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'PENDING' ? 'bg-amber-500 text-black' : 'text-foreground/60 hover:text-white')}
-            >
-              En cours
-            </button>
-            <button
-              onClick={() => setStatusFilter('COMPLETED')}
-              className={cx('rounded-lg px-3 py-1 font-bold transition cursor-pointer', statusFilter === 'COMPLETED' ? 'bg-emerald-500 text-black' : 'text-foreground/60 hover:text-white')}
-            >
-              Solde 100%
+              <UserCheck className="h-3.5 w-3.5" />
+              {onlyMyReservations ? 'Mes réservations' : 'Toutes'}
             </button>
           </div>
 
@@ -394,6 +413,7 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                 <th className="px-4 py-3">N° Réservation</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Agent / Caissier</th>
                 <th className="px-4 py-3">Statut</th>
                 <th className="px-4 py-3 text-right">Total</th>
                 <th className="px-4 py-3 text-right">Déjà Payé</th>
@@ -404,11 +424,11 @@ export default function ReservationsView({ categories = [], currentUser, serverO
             <tbody className="divide-y divide-white/5">
               {loadingList ? (
                 <tr>
-                  <td colSpan="8" className="text-center py-12 text-foreground/40 italic">Chargement des réservations...</td>
+                  <td colSpan="9" className="text-center py-12 text-foreground/40 italic">Chargement des réservations...</td>
                 </tr>
               ) : reservations.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="text-center py-16 text-foreground/40 italic">
+                  <td colSpan="9" className="text-center py-16 text-foreground/40 italic">
                     Aucune réservation trouvée.
                   </td>
                 </tr>
@@ -432,6 +452,12 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                       <td className="px-4 py-3 font-semibold text-foreground">
                         <div>{res.clientName || 'Client anonyme'}</div>
                         {res.clientPhone && <div className="text-[10px] text-foreground/40 font-mono">{res.clientPhone}</div>}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-foreground/80">
+                        <div className="flex items-center gap-1.5">
+                          <User className="h-3.5 w-3.5 text-gold shrink-0" />
+                          <span>{res.createdBy?.name || '—'}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <span className={cx(
@@ -474,6 +500,40 @@ export default function ReservationsView({ categories = [], currentUser, serverO
                 })
               )}
             </tbody>
+            <tfoot className="sticky bottom-0 bg-zinc-900 border-t-2 border-gold/40 text-xs font-bold z-10 shadow-2xl">
+              {loadingList ? (
+                <tr className="bg-zinc-900/95 backdrop-blur">
+                  <td colSpan={9} className="px-4 py-3 text-center text-foreground/30 italic text-xs animate-pulse">
+                    Calcul des totaux...
+                  </td>
+                </tr>
+              ) : (() => {
+                const activeFilteredRes = reservations.filter(r => r.status !== 'CANCELLED');
+                const sumTotal = activeFilteredRes.reduce((sum, r) => sum + (parseFloat(r.totalAmount) || 0), 0);
+                const sumPaid = activeFilteredRes.reduce((sum, r) => sum + getAlreadyPaid(r), 0);
+                const sumRemaining = activeFilteredRes.reduce((sum, r) => sum + getRemainingBalance(r), 0);
+
+                return (
+                  <tr className="bg-zinc-900/95 backdrop-blur">
+                    <td colSpan={5} className="px-4 py-3 text-gold uppercase tracking-wider font-extrabold">
+                      TOTAL RÉSERVATIONS ({activeFilteredRes.length} active{activeFilteredRes.length > 1 ? 's' : ''})
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-purple-300 text-sm font-black">
+                      {formatFCFA(sumTotal)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-emerald-400 text-sm font-black">
+                      {formatFCFA(sumPaid)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-amber-400 text-sm font-black">
+                      {formatFCFA(sumRemaining)}
+                    </td>
+                    <td className="px-4 py-3 text-center text-foreground/40 text-[10px]">
+                      Filtre actif
+                    </td>
+                  </tr>
+                );
+              })()}
+            </tfoot>
           </table>
         </div>
       </div>

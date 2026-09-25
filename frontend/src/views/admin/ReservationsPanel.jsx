@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatFCFA, getTodayDateStr, triggerProformaPrint, cx } from '../../utils/helpers';
-import { RotateCcw, Calendar, Printer, Trash2, XCircle } from 'lucide-react';
+import { RotateCcw, Calendar, Printer, Trash2, XCircle, Clock } from 'lucide-react';
 
 export default function ReservationsPanel({
   reservations = [],
@@ -85,6 +85,23 @@ export default function ReservationsPanel({
     if (!reservationStatusFilter) return true;
     return res.status === reservationStatusFilter;
   });
+
+  // Calculations for Synthèse des Réservations
+  const activeReservations = safeReservations.filter(r => r.status !== 'CANCELLED');
+  const resTotalValue = activeReservations.reduce((sum, r) => sum + Number(r.totalAmount || 0), 0);
+  const resTotalPaid = activeReservations.reduce((sum, r) => {
+    const paid = r.totalPaid !== undefined 
+      ? Number(r.totalPaid || 0)
+      : (r.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    return sum + paid;
+  }, 0);
+  const resTotalRemaining = activeReservations.reduce((sum, r) => {
+    const paid = r.totalPaid !== undefined 
+      ? Number(r.totalPaid || 0)
+      : (r.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    const total = Number(r.totalAmount || 0);
+    return sum + Math.max(0, total - paid);
+  }, 0);
 
   const selectedReservation = filteredReservations.find(res => res.id === selectedReservationId) || safeReservations.find(res => res.id === selectedReservationId) || null;
 
@@ -172,6 +189,33 @@ export default function ReservationsPanel({
             Filtre actif : {filterDate ? formatFilterDate(filterDate) : 'Toutes dates'} {filterCashier ? `| Caissière : ${safeUsers.find(u => u.id === filterCashier)?.name || 'Sélectionnée'}` : ''}
           </div>
         )}
+      </div>
+
+      {/* Synthèse des Réservations Section */}
+      <div className="rounded-2xl border border-purple-500/20 bg-purple-950/20 p-4 space-y-3 shadow-lg shadow-purple-950/10">
+        <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase tracking-wider">
+          <Clock className="h-4 w-4 text-purple-400" />
+          <span>Synthèse des Réservations ({activeReservations.length} réservation{activeReservations.length > 1 ? 's' : ''})</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-3">
+            <div className="text-[10px] font-bold uppercase text-purple-300">Valeur Totale Réservée</div>
+            <div className="text-base font-black text-purple-300 mt-1">{formatFCFA(resTotalValue)}</div>
+            <div className="text-[9px] text-purple-300/60 mt-0.5">Montant total des marchandises réservées</div>
+          </div>
+
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+            <div className="text-[10px] font-bold uppercase text-amber-300">Solde Restant Dû</div>
+            <div className="text-base font-black text-amber-400 mt-1">{formatFCFA(resTotalRemaining)}</div>
+            <div className="text-[9px] text-amber-300/60 mt-0.5">Reste à percevoir pour solder</div>
+          </div>
+
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <div className="text-[10px] font-bold uppercase text-emerald-300">Acomptes & Règlements Perçus</div>
+            <div className="text-base font-black text-emerald-400 mt-1">{formatFCFA(resTotalPaid)}</div>
+            <div className="text-[9px] text-emerald-300/60 mt-0.5">Montant déjà encaissé en caisse</div>
+          </div>
+        </div>
       </div>
 
       {/* Reservations Section */}

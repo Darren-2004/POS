@@ -262,7 +262,7 @@ export default function CashierView({ categories, currentUser, serverOnline, act
       ) : activeTab === 'stats' ? (
         <CashierStatsView currentUser={currentUser} serverOnline={serverOnline} />
       ) : activeTab === 'deliveries' ? (
-        <DeliveriesView currentUser={currentUser} />
+        <DeliveriesView currentUser={currentUser} serverOnline={serverOnline} categories={categories} />
       ) : (
         <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
           <div className="flex w-72 flex-col overflow-hidden p-3 bg-black/20 rounded-2xl border border-white/5">
@@ -669,62 +669,68 @@ export default function CashierView({ categories, currentUser, serverOnline, act
 
               <div className="flex items-center gap-3 flex-wrap">
                 {/* Button: Créer Livraison (Sky/Blue) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (cart.length === 0) return alert('Le panier est vide');
-                    setShowDeliveryMode(true);
-                    setShowReservationMode(false);
-                  }}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showDeliveryMode}
-                  className={cx(
-                    'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
-                    showDeliveryMode
-                      ? 'bg-sky-900/50 text-sky-300 border border-sky-500/40 opacity-80 cursor-not-allowed'
-                      : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-600/20 border border-sky-400/30 disabled:opacity-40'
-                  )}
-                  title="Créer une commande de livraison"
-                >
-                  <Truck className="h-4 w-4" />
-                  <span>{showDeliveryMode ? 'Mode Livraison Actif' : 'Créer Livraison'}</span>
-                </button>
+                {(currentUser?.role === 'ADMIN' || (currentUser?.permissions || 'ALL') === 'ALL' || (currentUser?.permissions || 'ALL') === 'CUSTOMER_SERVICE') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cart.length === 0) return alert('Le panier est vide');
+                      setShowDeliveryMode(true);
+                      setShowReservationMode(false);
+                    }}
+                    disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showDeliveryMode}
+                    className={cx(
+                      'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
+                      showDeliveryMode
+                        ? 'bg-sky-900/50 text-sky-300 border border-sky-500/40 opacity-80 cursor-not-allowed'
+                        : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-600/20 border border-sky-400/30 disabled:opacity-40'
+                    )}
+                    title="Créer une commande de livraison"
+                  >
+                    <Truck className="h-4 w-4" />
+                    <span>{showDeliveryMode ? 'Mode Livraison Actif' : 'Créer Livraison'}</span>
+                  </button>
+                )}
 
-                {/* Button: Créer Réservation (Distinct Purple Color) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (cart.length === 0) return alert('Le panier est vide');
-                    setShowReservationMode(true);
-                    setShowDeliveryMode(false);
-                  }}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
-                  className={cx(
-                    'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
-                    showReservationMode
-                      ? 'bg-purple-900/50 text-purple-300 border border-purple-500/40 opacity-80 cursor-not-allowed'
-                      : 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 border border-purple-400/30 disabled:opacity-40'
-                  )}
-                  title="Créer une réservation avec acompte"
-                >
-                  <PlusCircle className="h-4 w-4" />
-                  <span>{showReservationMode ? 'Mode Réservation Actif' : 'Créer Réservation'}</span>
-                </button>
+                {/* Button: Créer Réservation (Distinct Purple Color) - accessible à TOUTES les caissières */}
+                {
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cart.length === 0) return alert('Le panier est vide');
+                      setShowReservationMode(true);
+                      setShowDeliveryMode(false);
+                    }}
+                    disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode}
+                    className={cx(
+                      'rounded-2xl py-3 px-5 text-xs font-extrabold transition flex items-center gap-2 cursor-pointer shadow-lg',
+                      showReservationMode
+                        ? 'bg-purple-900/50 text-purple-300 border border-purple-500/40 opacity-80 cursor-not-allowed'
+                        : 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 border border-purple-400/30 disabled:opacity-40'
+                    )}
+                    title="Créer une réservation avec acompte"
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                    <span>{showReservationMode ? 'Mode Réservation Actif' : 'Créer Réservation'}</span>
+                  </button>
+                }
 
                 {/* Button: Valider Ticket (Distinct Emerald Green Color, Disabled during reservation/delivery mode) */}
-                <button
-                  type="button"
-                  onClick={handleValidateAndPrint}
-                  disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode || showDeliveryMode}
-                  className={cx(
-                    'rounded-2xl py-3 px-8 text-xs font-black transition shadow-lg cursor-pointer',
-                    (showReservationMode || showDeliveryMode)
-                      ? 'bg-zinc-800 text-foreground/30 border border-white/10 opacity-30 cursor-not-allowed'
-                      : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20 disabled:opacity-40'
-                  )}
-                  title={(showReservationMode || showDeliveryMode) ? 'Désactivé pendant ce mode' : 'Valider la vente directe'}
-                >
-                  {isSubmittingOrder ? 'Enregistrement...' : 'Valider Ticket'}
-                </button>
+                {(currentUser?.role === 'ADMIN' || (currentUser?.permissions || 'ALL') === 'ALL' || (currentUser?.permissions || 'ALL') === 'DIRECT_SALE') && (
+                  <button
+                    type="button"
+                    onClick={handleValidateAndPrint}
+                    disabled={isSubmittingOrder || cart.length === 0 || !serverOnline || showReservationMode || showDeliveryMode}
+                    className={cx(
+                      'rounded-2xl py-3 px-8 text-xs font-black transition shadow-lg cursor-pointer',
+                      (showReservationMode || showDeliveryMode)
+                        ? 'bg-zinc-800 text-foreground/30 border border-white/10 opacity-30 cursor-not-allowed'
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20 disabled:opacity-40'
+                    )}
+                    title={(showReservationMode || showDeliveryMode) ? 'Désactivé pendant ce mode' : 'Valider la vente directe'}
+                  >
+                    {isSubmittingOrder ? 'Enregistrement...' : 'Valider Ticket'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
