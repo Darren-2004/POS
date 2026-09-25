@@ -482,8 +482,27 @@ app.get('/api/users', async (req, res) => {
     });
     res.json(users);
   } catch (error) {
-    console.error('GET /api/users error:', error);
-    res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs' });
+    console.error('GET /api/users error:', error.message);
+    // If table column error (e.g. missing permissions or needsPinReset on older DB), run auto-migration and retry
+    try {
+      await ensureUserColumnsExist();
+      const users = await prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          permissions: true,
+          needsPinReset: true
+        },
+        orderBy: {
+          name: 'asc'
+        }
+      });
+      return res.json(users);
+    } catch (retryErr) {
+      console.error('GET /api/users retry error:', retryErr.message);
+      res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs' });
+    }
   }
 });
 
@@ -3236,6 +3255,25 @@ async function ensureDeliveryColumnsExist() {
   }
 }
 
+async function ensureUserColumnsExist() {
+  try {
+    const columns = await prisma.$queryRawUnsafe(`PRAGMA table_info("User")`);
+    if (Array.isArray(columns)) {
+      const colNames = columns.map(c => c.name);
+      if (!colNames.includes('permissions')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "permissions" TEXT DEFAULT 'ALL'`);
+        console.log('✅ Auto-migration: Colonne "permissions" ajoutée à User');
+      }
+      if (!colNames.includes('needsPinReset')) {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "needsPinReset" BOOLEAN DEFAULT 1`);
+        console.log('✅ Auto-migration: Colonne "needsPinReset" ajoutée à User');
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Verification automatique des colonnes User:', err.message);
+  }
+}
+
 // Démarrage du serveur
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`================================================`);
@@ -3244,6 +3282,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
   console.log(`================================================`);
+  ensureUserColumnsExist().catch(err => console.error('Ensure user columns error:', err));
   ensureDeliveryColumnsExist().catch(err => console.error('Ensure delivery columns error:', err));
   syncExistingClients().catch(err => console.error('Sync clients error:', err));
   syncExistingDeliveryPersons().catch(err => console.error('Sync delivery persons error:', err));
