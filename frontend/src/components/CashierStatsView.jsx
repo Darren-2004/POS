@@ -36,7 +36,7 @@ export default function CashierStatsView({ currentUser }) {
 
   const getDateParams = () => {
     const now = new Date();
-    let startDateStr, endDateStr;
+    let startDateStr = '', endDateStr = '';
     if (period === 'today') {
       const todayStr = getTodayDateStr();
       startDateStr = todayStr;
@@ -44,13 +44,16 @@ export default function CashierStatsView({ currentUser }) {
     } else if (period === 'custom') {
       startDateStr = customDate || getTodayDateStr();
       endDateStr = customDate || getTodayDateStr();
-    } else {
+    } else if (period === 'week') {
       const d = new Date(now);
       const day = d.getDay();
       const diff = day === 0 ? -6 : 1 - day;
       d.setDate(d.getDate() + diff);
       startDateStr = getTodayDateStr(d);
       endDateStr = getTodayDateStr();
+    } else if (period === 'all') {
+      startDateStr = '';
+      endDateStr = '';
     }
     return { startDateStr, endDateStr };
   };
@@ -61,13 +64,13 @@ export default function CashierStatsView({ currentUser }) {
     if (!currentUser?.id) return;
     setLoading(true);
     try {
-      const cashierParam = onlyMyOps ? `&cashierId=${currentUser.id}` : '';
-      const res = await fetch(`${API_BASE}/stats?startDate=${startDateStr}&endDate=${endDateStr}${cashierParam}`);
+      const cashierParam = onlyMyOps ? `cashierId=${currentUser.id}` : '';
+      const dateParams = (startDateStr && endDateStr) ? `startDate=${startDateStr}&endDate=${endDateStr}` : '';
+      const queryStr = [dateParams, cashierParam].filter(Boolean).join('&');
+      const res = await fetch(`${API_BASE}/stats${queryStr ? '?' + queryStr : ''}`);
       if (res.ok) {
         const data = await res.json();
-        if (period === 'today') setStats(data.today);
-        else if (period === 'week') setStats(data.week);
-        else setStats(data.activeFilter || data.today);
+        setStats(data.filtered || data.today);
       }
     } catch (e) {
       console.error('Fetch cashier stats error:', e);
@@ -79,11 +82,15 @@ export default function CashierStatsView({ currentUser }) {
   const fetchDetails = async () => {
     if (!currentUser?.id) return;
     try {
-      const cashierParam = onlyMyOps ? `&cashierId=${currentUser.id}` : '';
+      const cashierParam = onlyMyOps ? `cashierId=${currentUser.id}` : '';
+      const dateParams = (startDateStr && endDateStr) ? `startDate=${startDateStr}&endDate=${endDateStr}` : '';
+      const baseQuery = [dateParams, cashierParam].filter(Boolean).join('&');
+      const invQuery = ['includeAllDeliveries=true', baseQuery].filter(Boolean).join('&');
+
       const [invRes, delRes, resRes] = await Promise.all([
-        fetch(`${API_BASE}/invoices?startDate=${startDateStr}&endDate=${endDateStr}&includeAllDeliveries=true${cashierParam}`),
-        fetch(`${API_BASE}/deliveries?startDate=${startDateStr}&endDate=${endDateStr}${cashierParam}`),
-        fetch(`${API_BASE}/reservations?startDate=${startDateStr}&endDate=${endDateStr}${cashierParam}`)
+        fetch(`${API_BASE}/invoices?${invQuery}`),
+        fetch(`${API_BASE}/deliveries${baseQuery ? '?' + baseQuery : ''}`),
+        fetch(`${API_BASE}/reservations${baseQuery ? '?' + baseQuery : ''}`)
       ]);
       if (invRes.ok) {
         const invData = await invRes.json();
@@ -177,36 +184,56 @@ export default function CashierStatsView({ currentUser }) {
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-white/10 text-xs">
             <button
+              type="button"
               onClick={() => { setPeriod('today'); setCustomDate(getTodayDateStr()); }}
               className={cx(
-                "px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer",
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer",
                 period === 'today' ? "bg-gold text-black shadow" : "text-foreground/60 hover:text-foreground"
               )}
             >
               Aujourd'hui
             </button>
             <button
+              type="button"
               onClick={() => setPeriod('week')}
               className={cx(
-                "px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer",
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer",
                 period === 'week' ? "bg-gold text-black shadow" : "text-foreground/60 hover:text-foreground"
               )}
             >
               Cette Semaine
             </button>
+            <button
+              type="button"
+              onClick={() => setPeriod('all')}
+              className={cx(
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer",
+                period === 'all' ? "bg-gold text-black shadow" : "text-foreground/60 hover:text-foreground"
+              )}
+            >
+              Toutes les dates
+            </button>
           </div>
 
           {/* Custom Date Input */}
-          <div className="flex items-center gap-1.5 bg-zinc-950 px-2 py-1 rounded-xl border border-white/10 text-xs">
-            <Calendar className="h-3.5 w-3.5 text-gold" />
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold text-foreground/90 flex items-center gap-1">
+              <Calendar className="h-3.5 w-3.5 text-gold shrink-0" />
+              <span>Choisir une date :</span>
+            </label>
             <input
               type="date"
-              value={customDate}
+              value={period === 'custom' ? customDate : ''}
               onChange={(e) => {
-                setCustomDate(e.target.value);
-                setPeriod('custom');
+                if (e.target.value) {
+                  setCustomDate(e.target.value);
+                  setPeriod('custom');
+                }
               }}
-              className="bg-transparent text-foreground text-xs font-semibold outline-none border-none cursor-pointer [color-scheme:dark]"
+              className={cx(
+                "bg-zinc-800 text-white font-bold border-2 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-gold/50 [color-scheme:dark] cursor-pointer transition shadow-md",
+                period === 'custom' ? "border-gold bg-gold/20 text-gold" : "border-white/30 hover:border-gold/60 text-foreground"
+              )}
             />
           </div>
 
