@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,6 +13,21 @@ const prismaDbPath = path.resolve(__dirname, 'prisma', 'dev.db');
 
 if (!fs.existsSync(dbPath) && fs.existsSync(prismaDbPath)) {
   dbPath = prismaDbPath;
+}
+
+// Nettoyage automatique des fichiers journal WAL si la BD a été collée manuellement
+try {
+  const walFile = `${dbPath}-wal`;
+  const shmFile = `${dbPath}-shm`;
+  if (fs.existsSync(walFile) || fs.existsSync(shmFile)) {
+    try {
+      execSync(`sqlite3 "${dbPath}" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null`);
+    } catch (e) {
+      // Ignorer si sqlite3 CLI n'est pas installé
+    }
+  }
+} catch (e) {
+  // Ignorer
 }
 
 let prismaInstance;
