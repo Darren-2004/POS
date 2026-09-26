@@ -49,6 +49,7 @@ export default function App() {
   });
 
   const [users, setUsers] = useState([]);
+  const [usersLoadError, setUsersLoadError] = useState('');
   const [categories, setCategories] = useState([]);
   const [serverOnline, setServerOnline] = useState(true);
   const [toast, setToast] = useState(null);
@@ -115,11 +116,19 @@ export default function App() {
   const fetchUsers = async () => {
     try {
       const res = await fetch(`${API_BASE}/users`);
-      if (res.ok) {
-        const data = await res.json();
-        setUsers(Array.isArray(data) ? data : []);
+      if (!res.ok) {
+        const details = await res.text();
+        console.error(`GET ${API_BASE}/users failed (HTTP ${res.status}):`, details);
+        setUsersLoadError(`Le chargement des utilisateurs a échoué (HTTP ${res.status}).`);
+        return;
       }
-    } catch (e) { console.error(e); }
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+      setUsersLoadError('');
+    } catch (e) {
+      console.error('GET /api/users network or JSON error:', e);
+      setUsersLoadError('Impossible de récupérer les utilisateurs. Vérifiez les journaux du serveur.');
+    }
   };
 
   const fetchCategories = async () => {
@@ -163,6 +172,7 @@ export default function App() {
           {currentView === 'login' && (
             <LoginView
               users={users}
+              usersLoadError={usersLoadError}
               serverOnline={serverOnline}
               setCurrentUser={setCurrentUser}
               setCurrentView={setCurrentView}

@@ -4,7 +4,7 @@ import Field, { inputCls } from '../components/Field';
 import { cx } from '../utils/helpers';
 import { API_BASE } from '../utils/constants';
 
-export default function LoginView({ users, serverOnline, setCurrentUser, setCurrentView }) {
+export default function LoginView({ users, usersLoadError, serverOnline, setCurrentUser, setCurrentView }) {
   const [selectedUser, setSelectedUser] = useState(null);
   const [enteredPin, setEnteredPin] = useState('');
   const [authError, setAuthError] = useState('');
@@ -164,6 +164,11 @@ export default function LoginView({ users, serverOnline, setCurrentUser, setCurr
                 className={cx(inputCls, 'pl-9')}
               />
             </div>
+            {usersLoadError && (
+              <p role="alert" className="mb-4 text-center text-xs text-red-400">
+                {usersLoadError}
+              </p>
+            )}
             <div className="grid max-h-[calc(100vh-280px)] grid-cols-2 gap-3 overflow-y-auto pr-1">
               {filteredUsers.length === 0 ? (
                 <div className="col-span-2 text-center text-xs text-foreground/40 py-6 italic">
