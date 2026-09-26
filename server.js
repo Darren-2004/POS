@@ -19,6 +19,15 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    console.log(`[HTTP] ${req.method} ${req.path} -> ${res.statusCode} (${Date.now() - startedAt} ms) from ${req.ip}`);
+  });
+  next();
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -514,9 +523,10 @@ app.get('/api/users', async (req, res) => {
       permissions: u.permissions || 'ALL',
       needsPinReset: Boolean(u.needsPinReset)
     }));
+    console.log(`GET /api/users [Prisma ORM] OK — ${formatted.length} users`);
     return res.json(formatted);
   } catch (error) {
-    console.error('GET /api/users [Prisma ORM] error:', error.message || error);
+    console.error('GET /api/users [Prisma ORM] error:', error);
   }
 
   // Méthode 2: Prisma raw SQL
@@ -532,7 +542,7 @@ app.get('/api/users', async (req, res) => {
     console.log(`GET /api/users [Prisma raw SQL] OK — ${formatted.length} users`);
     return res.json(formatted);
   } catch (rawErr) {
-    console.error('GET /api/users [Prisma raw SQL] error:', rawErr.message || rawErr);
+    console.error('GET /api/users [Prisma raw SQL] error:', rawErr);
   }
 
   // Méthode 3: better-sqlite3 directement (contourne Prisma complètement)
@@ -556,7 +566,7 @@ app.get('/api/users', async (req, res) => {
     console.log(`GET /api/users [better-sqlite3 direct] OK — ${formatted.length} users`);
     return res.json(formatted);
   } catch (sqliteErr) {
-    console.error('GET /api/users [better-sqlite3 direct] error:', sqliteErr.message || sqliteErr);
+    console.error('GET /api/users [better-sqlite3 direct] error:', sqliteErr);
     return res.status(500).json({
       error: 'Erreur lors de la récupération des utilisateurs',
       details: String(sqliteErr.message || sqliteErr)
@@ -3369,6 +3379,7 @@ async function ensureUserTableAndColumnsExist() {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`================================================`);
   console.log(`SERVEUR LOCAL DE CAISSE DÉMARRÉ`);
+  console.log(`PID du serveur : ${process.pid}`);
   console.log(`URL local Admin (ce PC) : http://localhost:${PORT}`);
   console.log(`Pour connecter les Caissières, utilisez l'adresse IP`);
   console.log(`locale de ce PC, par exemple : http://192.168.1.X:${PORT}`);
